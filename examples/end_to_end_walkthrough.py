@@ -14,7 +14,7 @@ Example:
       --endpoint my-cluster.cluster-abc123.us-east-1.neptune.amazonaws.com \
       --region us-east-1 \
       --cluster-id my-neptune-cluster \
-      --target QUADS
+      --scope QUADS
 """
 
 import argparse
@@ -36,10 +36,12 @@ def main():
     parser.add_argument("--port", type=int, default=8182, help="Neptune port")
     parser.add_argument("--cluster-id", help="DBClusterIdentifier (for your records)")
     parser.add_argument(
-        "--target", default="ALL", choices=("ALL", "QUADS", "DICTIONARIES")
+        "--scope", default="ALL", choices=("ALL", "QUADS", "DICTIONARIES")
     )
     parser.add_argument("--concurrency", type=int, default=None)
-    parser.add_argument("--write-buffer-size", type=int, default=None)
+    parser.add_argument(
+        "--write-buffer-size", default=None, choices=("LOW", "MEDIUM", "HIGH")
+    )
     parser.add_argument("--poll-seconds", type=int, default=30)
     args = parser.parse_args()
 
@@ -49,11 +51,11 @@ def main():
     print(summarize(before))
 
     # 2. Reclaim — start the online index rebuild.
-    print(f"\n=== Step 2: Reclaim (online index rebuild, target={args.target}) ===")
+    print(f"\n=== Step 2: Reclaim (online index rebuild, scope={args.scope}) ===")
     op_id = start_index_rebuild(
         args.endpoint,
         args.region,
-        target=args.target,
+        scope=args.scope,
         concurrency=args.concurrency,
         write_buffer_size=args.write_buffer_size,
         port=args.port,

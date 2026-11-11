@@ -17,7 +17,7 @@ ENDPOINT="${NEPTUNE_ENDPOINT:-my-cluster.cluster-abc123.us-east-1.neptune.amazon
 REGION="${AWS_REGION:-us-east-1}"
 PORT="${NEPTUNE_PORT:-8182}"
 CLUSTER_ID="${NEPTUNE_CLUSTER_ID:-my-neptune-cluster}"
-TARGET="${REBUILD_TARGET:-ALL}"   # ALL | QUADS | DICTIONARIES
+SCOPE="${REBUILD_SCOPE:-ALL}"   # ALL | QUADS | DICTIONARIES
 
 NEPTUNE_URL="https://${ENDPOINT}:${PORT}"
 
@@ -26,13 +26,13 @@ aws neptunedata get-storage-info \
   --endpoint-url "${NEPTUNE_URL}" \
   --region "${REGION}"
 
-echo "=== Step 2: Reclaim — start online index rebuild (target=${TARGET}) ==="
+echo "=== Step 2: Reclaim — start online index rebuild (scope=${SCOPE}) ==="
 OP_JSON="$(aws neptunedata start-index-rebuild \
   --endpoint-url "${NEPTUNE_URL}" \
   --region "${REGION}" \
-  --target "${TARGET}")"
+  --scope "${SCOPE}")"
 echo "${OP_JSON}"
-OP_ID="$(echo "${OP_JSON}" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("operationId") or d.get("id",""))')"
+OP_ID="$(echo "${OP_JSON}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("rebuildId",""))')"
 echo "operationId=${OP_ID}"
 
 echo "=== Step 3: Monitor — poll index rebuild status ==="
@@ -41,7 +41,7 @@ while true; do
   STATUS="$(aws neptunedata get-index-rebuild-status \
     --endpoint-url "${NEPTUNE_URL}" \
     --region "${REGION}" \
-    --operation-id "${OP_ID}")"
+    --rebuild-id "${OP_ID}")"
   STATE="$(echo "${STATUS}" | python3 -c 'import sys,json;d=json.load(sys.stdin);print((d.get("status") or d.get("state") or "").upper())')"
   echo "status: ${STATE}"
   case "${STATE}" in
@@ -67,4 +67,4 @@ aws cloudwatch get-metric-statistics \
 
 # To cancel an in-progress rebuild:
 #   aws neptunedata cancel-index-rebuild \
-#     --endpoint-url "${NEPTUNE_URL}" --region "${REGION}" --operation-id "${OP_ID}"
+#     --endpoint-url "${NEPTUNE_URL}" --region "${REGION}" --rebuild-id "${OP_ID}"

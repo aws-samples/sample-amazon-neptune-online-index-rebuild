@@ -64,7 +64,7 @@ python examples/end_to_end_walkthrough.py \
   --endpoint my-cluster.cluster-abc123.us-east-1.neptune.amazonaws.com \
   --region us-east-1 \
   --cluster-id my-neptune-cluster \
-  --target QUADS
+  --scope QUADS
 ```
 
 Or run each step on its own:
@@ -75,7 +75,7 @@ python src/storage_info.py --endpoint <endpoint> --region us-east-1
 
 # 2. Reclaim — start a scoped rebuild and wait for it to finish
 python src/index_rebuild.py --endpoint <endpoint> --region us-east-1 \
-  --target QUADS --wait
+  --scope QUADS --wait
 
 # 3. Verify — compare storage and inspect CloudWatch VolumeBytesUsed
 python src/verify.py --endpoint <endpoint> --region us-east-1 \
@@ -97,11 +97,11 @@ bash cli/commands.sh
 
 ## Scoping and tuning
 
-- **`--target`** — scope the rebuild to `ALL`, `QUADS`, or `DICTIONARIES`. Start
+- **`--scope`** — scope the rebuild to `ALL`, `QUADS`, or `DICTIONARIES`. Start
   narrow (for example `QUADS`) if that is where your fragmentation is.
 - **`--concurrency`** — higher parallelism finishes faster but uses more cluster
   resources; tune for your workload and headroom.
-- **`--write-buffer-size`** — buffer size (MiB) used during the rebuild.
+- **`--write-buffer-size`** — write buffer size, one of `LOW`, `MEDIUM`, `HIGH` (default `LOW`). Use a higher value under heavy write traffic or bulk loads.
 
 ## Handling `CancelledByMaintenanceException`
 

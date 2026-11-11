@@ -27,7 +27,8 @@ import boto3
 from botocore.exceptions import ClientError
 
 # Target scopes accepted by the rebuild API.
-VALID_TARGETS = ("ALL", "QUADS", "DICTIONARIES")
+VALID_SCOPES = ("ALL", "QUADS", "DICTIONARIES")
+VALID_WRITE_BUFFER_SIZES = ("LOW", "MEDIUM", "HIGH")
 
 # Exceptions that are safe to retry — the storage layer was briefly in
 # maintenance mode. Treat CancelledByMaintenanceException like
@@ -87,46 +88,54 @@ def with_backoff(fn, *, max_attempts=6, base_delay=1.0, max_delay=30.0):
 def start_index_rebuild(
     endpoint,
     region,
-    target="ALL",
+    scope="ALL",
     concurrency=None,
     write_buffer_size=None,
     port=8182,
 ):
-    """Start an online index rebuild and return the operation id.
+    """Start an online index rebuild and return the rebuild id.
 
     Args:
         endpoint: Neptune endpoint hostname.
         region: AWS region.
-        target: Scope of the rebuild — one of ALL, QUADS, DICTIONARIES.
-        concurrency: Optional parallelism for the rebuild. Higher values finish
-            faster but consume more cluster resources; tune for your workload.
-        write_buffer_size: Optional write buffer size (MiB) used during rebuild.
+        scope: Scope of the rebuild — one of ALL, QUADS, DICTIONARIES.
+        concurrency: Optional number of indexes to rebuild in parallel
+            (integer, 1..number of vCPUs on the writer; defaults to 1).
+            Higher values can shorten the rebuild but increase CPU and I/O load.
+        write_buffer_size: Optional write-buffer size — one of LOW, MEDIUM, HIGH
+            (defaults to LOW). Use a larger value under heavy write traffic or
+            bulk loads.
         port: Neptune port.
 
     Returns:
-        str: The index-rebuild operation id, used to poll status or cancel.
+        str: The index-rebuild id (rebuildId), used to poll status or cancel.
     """
-    target = target.upper()
-    if target not in VALID_TARGETS:
-        raise ValueError(f"target must be one of {VALID_TARGETS}, got {target!r}")
+    scope = scope.upper()
+    if scope not in VALID_SCOPES:
+        raise ValueError(f"scope must be one of {VALID_SCOPES}, got {scope!r}")
 
     client = _neptune_client(endpoint, region, port)
 
-    params = {"target": target}
+    params = {"scope": scope}
     if concurrency is not None:
         params["concurrency"] = concurrency
     if write_buffer_size is not None:
-        params["writeBufferSize"] = write_buffer_size
+        wbs = write_buffer_size.upper()
+        if wbs not in VALID_WRITE_BUFFER_SIZES:
+            raise ValueError(
+                f"write_buffer_size must be one of {VALID_WRITE_BUFFER_SIZES}, "
+                f"got {write_buffer_size!r}")
+        params["writeBufferSize"] = wbs
 
     resp = with_backoff(lambda: client.start_index_rebuild(**params))
-    return resp.get("operationId") or resp.get("id")
+    return resp.get("rebuildId")
 
 
 def get_index_rebuild_status(endpoint, region, operation_id, port=8182):
     """Return the current status of an index rebuild operation."""
     client = _neptune_client(endpoint, region, port)
     return with_backoff(
-        lambda: client.get_index_rebuild_status(operationId=operation_id)
+        lambda: client.get_index_rebuild_status(rebuildId=operation_id)
     )
 
 
@@ -134,7 +143,7 @@ def cancel_index_rebuild(endpoint, region, operation_id, port=8182):
     """Cancel an in-progress index rebuild operation."""
     client = _neptune_client(endpoint, region, port)
     return with_backoff(
-        lambda: client.cancel_index_rebuild(operationId=operation_id)
+        lambda: client.cancel_index_rebuild(rebuildId=operation_id)
     )
 
 
@@ -163,14 +172,18 @@ def main():
     parser.add_argument("--region", required=True, help="AWS region, e.g. us-east-1")
     parser.add_argument("--port", type=int, default=8182, help="Neptune port")
     parser.add_argument(
-        "--target",
+        "--scope",
         default="ALL",
-        choices=VALID_TARGETS,
+        choices=VALID_SCOPES,
         help="Scope of the rebuild (default ALL)",
     )
-    parser.add_argument("--concurrency", type=int, default=None, help="Rebuild parallelism")
     parser.add_argument(
-        "--write-buffer-size", type=int, default=None, help="Write buffer size (MiB)"
+        "--concurrency", type=int, default=None,
+        help="Number of indexes to rebuild in parallel (1..vCPUs)",
+    )
+    parser.add_argument(
+        "--write-buffer-size", default=None, choices=VALID_WRITE_BUFFER_SIZES,
+        help="Write buffer size (LOW, MEDIUM, HIGH; default LOW)",
     )
     parser.add_argument(
         "--wait", action="store_true", help="Poll until the rebuild completes"
@@ -181,12 +194,12 @@ def main():
     op_id = start_index_rebuild(
         args.endpoint,
         args.region,
-        target=args.target,
+        scope=args.scope,
         concurrency=args.concurrency,
         write_buffer_size=args.write_buffer_size,
         port=args.port,
     )
-    print(f"Started index rebuild (target={args.target}); operationId={op_id}")
+    print(f"Started index rebuild (scope={args.scope}); rebuildId={op_id}")
 
     if args.wait:
         final = wait_for_completion(

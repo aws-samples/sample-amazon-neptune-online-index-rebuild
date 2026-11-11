@@ -130,8 +130,17 @@ Resources:
           SourceSecurityGroupId: !Ref RunnerSecurityGroup
 
   # ---------------------------------------------------------------- S3 + loader role
-  DataBucket:
+  # Destination for S3 server access logs of DataBucket.
+  AccessLogsBucket:
     Type: AWS::S3::Bucket
+    Metadata:
+      guard:
+        SuppressedRules:
+          - S3_BUCKET_LOGGING_ENABLED
+      checkov:
+        skip:
+          - id: CKV_AWS_18
+            comment: This is the access-log destination bucket; logging it to itself would create a log loop.
     Properties:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
@@ -143,6 +152,50 @@ Resources:
         RestrictPublicBuckets: true
       OwnershipControls:
         Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      VersioningConfiguration:
+        Status: Enabled
+
+  AccessLogsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AccessLogsBucket
+      PolicyDocument:
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource: [!GetAtt AccessLogsBucket.Arn, !Sub "${AccessLogsBucket.Arn}/*"]
+            Condition: { Bool: { aws:SecureTransport: false } }
+          # ACLs are disabled (BucketOwnerEnforced), so S3 log delivery is granted
+          # through the bucket policy, scoped to this account's buckets.
+          - Sid: AllowS3ServerAccessLogDelivery
+            Effect: Allow
+            Principal: { Service: logging.s3.amazonaws.com }
+            Action: s3:PutObject
+            Resource: !Sub "${AccessLogsBucket.Arn}/access-logs/*"
+            Condition:
+              StringEquals: { aws:SourceAccount: !Ref AWS::AccountId }
+
+  DataBucket:
+    Type: AWS::S3::Bucket
+    DependsOn: AccessLogsBucketPolicy
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      VersioningConfiguration:
+        Status: Enabled
+      LoggingConfiguration:
+        DestinationBucketName: !Ref AccessLogsBucket
+        LogFilePrefix: access-logs/
 
   DataBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -155,7 +208,7 @@ Resources:
             Principal: "*"
             Action: s3:*
             Resource: [!GetAtt DataBucket.Arn, !Sub "${DataBucket.Arn}/*"]
-            Condition: { Bool: { aws:SecureTransport: "false" } }
+            Condition: { Bool: { aws:SecureTransport: false } }
 
   NeptuneLoaderRole:
     Type: AWS::IAM::Role

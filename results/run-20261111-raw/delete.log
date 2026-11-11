@@ -1,0 +1,192 @@
+2026-11-11T17:05:10Z [delete] deleting buckets [0, 1, 2, 3, 4, 5] batch=2000 workers=2
+2026-11-11T17:08:35Z [delete] batches=25 vertices_deleted=50000
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.1s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 1.0s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.4s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.7s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.5s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.2s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.6s
+2026-11-11T17:12:07Z [delete] batches=50 vertices_deleted=100000
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.5s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.7s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.4s
+2026-11-11T17:15:14Z [delete] batches=75 vertices_deleted=150000
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.0s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 1.0s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.3s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.9s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.1s
+[retry] ConcurrentModificationException on attempt 3/6; backing off 4.0s
+[retry] ConcurrentModificationException on attempt 4/6; backing off 1.8s
+[retry] ConcurrentModificationException on attempt 5/6; backing off 7.2s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.1s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 0.5s
+[retry] ConcurrentModificationException on attempt 3/6; backing off 3.7s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.2s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.1s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.1s
+[retry] ConcurrentModificationException on attempt 3/6; backing off 1.4s
+2026-11-11T17:17:45Z [delete] bucket 1 empty
+2026-11-11T17:18:05Z [delete] batches=100 vertices_deleted=198000
+2026-11-11T17:18:31Z [delete] bucket 0 empty
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.2s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.3s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.6s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.2s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.4s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.3s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.9s
+[retry] ConcurrentModificationException on attempt 3/6; backing off 2.1s
+[retry] ConcurrentModificationException on attempt 4/6; backing off 5.4s
+[retry] ConcurrentModificationException on attempt 5/6; backing off 7.0s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.0s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.7s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.6s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.5s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 0.3s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.3s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 0.5s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.5s
+2026-11-11T17:21:19Z [delete] batches=125 vertices_deleted=246000
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.3s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.9s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.4s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.8s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.3s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.0s
+[retry] ConcurrentModificationException on attempt 3/6; backing off 0.4s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.1s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 0.5s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.2s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.7s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.6s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.5s
+[retry] ConcurrentModificationException on attempt 3/6; backing off 0.8s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.3s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.6s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.8s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.6s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.9s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.9s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.7s
+2026-11-11T17:24:29Z [delete] batches=150 vertices_deleted=296000
+[retry] ConcurrentModificationException on attempt 2/6; backing off 0.0s
+[retry] ConcurrentModificationException on attempt 3/6; backing off 0.5s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 1.0s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.7s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.4s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.0s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.8s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 1.0s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.7s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 1.0s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.0s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 0.4s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.8s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.7s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.7s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.2s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.7s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.1s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.3s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.8s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.6s
+2026-11-11T17:27:14Z [delete] batches=175 vertices_deleted=346000
+[retry] ConcurrentModificationException on attempt 3/6; backing off 1.6s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.2s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.9s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.9s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 0.4s
+[retry] ConcurrentModificationException on attempt 3/6; backing off 2.3s
+[retry] ConcurrentModificationException on attempt 4/6; backing off 1.9s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.5s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 0.2s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.4s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.2s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.5s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.8s
+[retry] ConcurrentModificationException on attempt 3/6; backing off 1.9s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.4s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 0.6s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.0s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.3s
+[retry] ConcurrentModificationException on attempt 3/6; backing off 2.9s
+[retry] ConcurrentModificationException on attempt 4/6; backing off 5.3s
+[retry] ConcurrentModificationException on attempt 5/6; backing off 5.1s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.5s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.9s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.5s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 0.7s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.7s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.8s
+2026-11-11T17:29:42Z [delete] bucket 2 empty
+2026-11-11T17:29:49Z [delete] batches=200 vertices_deleted=394000
+2026-11-11T17:30:25Z [delete] bucket 3 empty
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.2s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.5s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.2s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.2s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.1s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.1s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.8s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.1s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.0s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.9s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.6s
+2026-11-11T17:32:27Z [delete] batches=225 vertices_deleted=442000
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.3s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.6s
+[retry] ConcurrentModificationException on attempt 3/6; backing off 1.9s
+[retry] ConcurrentModificationException on attempt 4/6; backing off 4.8s
+[retry] ConcurrentModificationException on attempt 5/6; backing off 1.5s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 1.0s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.8s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.7s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 0.4s
+[retry] ConcurrentModificationException on attempt 1/6; backing off 0.6s
+[retry] ConcurrentModificationException on attempt 2/6; backing off 1.3s
+[retry] ConcurrentModificationException on attempt 3/6; backing off 1.3s
+[retry] ConcurrentModificationException on attempt 4/6; backing off 2.6s
+[retry] ConcurrentModificationException on attempt 5/6; backing off 2.7s
+2026-11-11T17:35:05Z [delete] batches=250 vertices_deleted=492000
+2026-11-11T17:36:46Z [delete] bucket 5 empty
+Traceback (most recent call last):
+  File "/opt/run/repo/scripts/stage_data.py", line 185, in <module>
+    main()
+  File "/opt/run/repo/scripts/stage_data.py", line 181, in main
+    {"load": cmd_load, "delete": cmd_delete}[a.cmd](a)
+  File "/opt/run/repo/scripts/stage_data.py", line 155, in cmd_delete
+    list(ex.map(run_bucket, a.buckets))
+  File "/usr/lib64/python3.12/concurrent/futures/_base.py", line 619, in result_iterator
+    yield _result_or_cancel(fs.pop())
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/concurrent/futures/_base.py", line 317, in _result_or_cancel
+    return fut.result(timeout)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/concurrent/futures/_base.py", line 456, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/usr/lib64/python3.12/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/run/repo/scripts/stage_data.py", line 139, in run_bucket
+    resp = with_backoff(lambda: client.execute_open_cypher_query(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/run/repo/scripts/../src/index_rebuild.py", line 73, in with_backoff
+    return fn()
+           ^^^^
+  File "/opt/run/repo/scripts/stage_data.py", line 139, in <lambda>
+    resp = with_backoff(lambda: client.execute_open_cypher_query(
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/botocore/client.py", line 606, in _api_call
+    return self._make_api_call(operation_name, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/botocore/context.py", line 123, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/botocore/client.py", line 1094, in _make_api_call
+    raise error_class(parsed_response, operation_name)
+botocore.errorfactory.ConcurrentModificationException: An error occurred (ConcurrentModificationException) when calling the ExecuteOpenCypherQuery operation: Operation failed due to conflicting concurrent operations (please retry), 0 transactions are currently rolling back.

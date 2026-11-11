@@ -1,0 +1,121 @@
+Amazon Neptune online index rebuild - storage reclaim run
+=========================================================
+Run date:        2026-11-11 (UTC)
+Cluster:         neptune-blog-reclaim (us-east-1), account <account-id> (test, non-production)
+Writer:          db.r6g.large (provisioned), engine 1.5.0.0 (1.5.0.0.R1), IAM auth enabled
+Rebuild:         scope=QUADS, concurrency=1, writeBufferSize=LOW (service defaults)
+rebuildId:       e6bc556e-ef7b-40b8-b782-7f4d7fa3fdce
+Client:          boto3/botocore 1.44.0, Python 3.12, EC2 runner in the same VPC
+
+CONTROLLED EXAMPLE - NOT A PRODUCTION BENCHMARK
+-----------------------------------------------
+Fragmentation was created on purpose for the demo:
+  - Bulk-loaded 1,000,000 vertices + 4,000,000 edges (19,000,000 loader records,
+    1,767 s). GetStorageInfo after load: 4,739,596,288 bytes (4.414 GiB).
+  - Deleted 60% of vertices (DETACH DELETE, 2,000 per batch), removing their edges.
+    Verified by query afterwards: 400,000 vertices and 638,964 edges remain
+    (84% of edges removed, because edge endpoints were random).
+
+SUMMARY
+-------
+GetStorageInfo totalStorageBytesUsed
+  BEFORE (2026-11-11T17:40:32Z):   4,885,970,944 bytes = 4.55 GiB
+  AFTER  (2026-11-11T17:58:06Z):   2,180,857,856 bytes = 2.03 GiB
+  Re-checked 2026-11-11T18:33:41Z: 2,180,857,856 bytes (unchanged)
+  Reclaimed:                       2,705,113,088 bytes = 2.52 GiB (55.4%)
+
+  Per component (bytes)        BEFORE          AFTER     change
+    quads.PG.SPOG       1,374,896,128    294,649,856   -78.6%
+    quads.PG.POGS       1,239,220,224    292,438,016   -76.4%
+    quads.PG.GPSO         975,585,280    297,500,672   -69.5%
+    quads (sum)         3,589,701,632    884,588,544   -75.4%
+    dictionaries.total    755,957,760    755,957,760    0
+    undoLogs              536,870,912    536,870,912    0
+    dfeStatistics             131,072        131,072    0
+    internals                 884,736        884,736    0
+  All of the reclaimed space came from the quad indexes, which is what a QUADS
+  rebuild targets. Dictionaries did not change.
+
+CloudWatch VolumeBytesUsed (AWS/Neptune, DBClusterIdentifier=neptune-blog-reclaim)
+  BEFORE (datapoint 17:40Z):        3,746,217,984 bytes = 3.49 GiB
+  AFTER  (latest datapoint 18:00Z): 3,746,217,984 bytes = 3.49 GiB
+  Change:                           0 bytes
+  Queried at 18:33:41Z. No datapoints after 18:00Z had been published yet.
+  The metric was flat at exactly this value from 17:10Z through 18:00Z, through both
+  the delete phase and the rebuild. Within this observation window, the reclaim
+  showed up in GetStorageInfo but not in VolumeBytesUsed.
+  Note: the run script recorded a "before" of 2,314,764,288 bytes (17:05Z) because
+  datapoints from 17:10Z onward had not been published when it queried at 17:40Z.
+  That value was taken as the load finished and is NOT used as the baseline here.
+
+Rebuild duration
+  Service-reported (startTime -> endTime): 17:40:32.674Z -> 17:56:31.055Z
+                                           = 958.4 s = 15:58 (min:sec)
+  Client wall clock (start -> first COMPLETED poll): 17:40:32Z -> 17:58:03Z
+                                           = 1,051.8 s = 17:31 (min:sec)
+  The wall-clock figure includes a monitoring gap (see below), so 15:58 is the
+  accurate duration.
+
+Terminal state
+  COMPLETED, progressPercentage=100, no failureReason. No FAILED/CANCELLED state.
+
+CancelledByMaintenanceException
+  Hit: NO
+  Retries by with_backoff: 0
+  Counted two ways: a botocore after-call hook on every neptunedata HTTP response,
+  and per-call accounting inside the with_backoff wrapper (validated offline with
+  botocore Stubber before the run).
+
+OTHER ERRORS OBSERVED DURING THE REBUILD (reported as-is; cause not determined)
+---------------------------------------------------------------------------
+Concurrent workload: 2 threads of openCypher reads (70%) and single-property
+updates (30%) on surviving vertices, each wrapped in src.index_rebuild.with_backoff.
+It ran from 17:40:32Z to 17:45:33Z.
+  - InternalFailureException (HTTP 500): 4, between 17:40:47Z and 17:41:06Z
+  - CancelledByUserException (HTTP 500): 2, at 17:40:58Z and 17:41:02Z
+  Neither is in with_backoff's retriable list, so these queries failed with no retry.
+  Total query and success counts were NOT recorded, because the process exited
+  before the workload summary was written.
+
+Monitoring interruption:
+  - 17:42:02Z  last successful poll in the first run (REBUILDING, 62%)
+  - 17:45:33Z  GetIndexRebuildStatus failed with botocore ReadTimeoutError
+               (60 s client read timeout). This is not a ClientError, so with_backoff
+               does not retry it, and the run script exited.
+  - 17:46Z     a manual GetIndexRebuildStatus with a 120 s read timeout also timed out.
+  - 17:54Z     diagnostics: DNS/TCP/TLS fine, GET /status "healthy" in 0.05 s,
+               GetIndexRebuildStatus OK in 0.73 s (REBUILDING, 66%),
+               GetStorageInfo OK in 3.3 s, openCypher query list showed 0 running.
+               But openCypher "RETURN 1" and ListIndexRebuilds both timed out (60 s).
+  - 17:58:03Z  monitoring resumed: COMPLETED; "RETURN 1" answered in 0.03 s.
+  - Writer during this window: status "available", no restart/failover events,
+    CPUUtilization ~65-92% until 17:41, then ~11% from 17:42 onward;
+    FreeableMemory steady at ~4.5-4.8 GB.
+  For several minutes during the rebuild, openCypher queries timed out or failed
+  with non-retriable errors. This went beyond the "small performance impact"
+  described in the docs. The cause was not determined; low CPU argues against
+  simple resource starvation.
+
+Staging-phase note (not part of the rebuild):
+  The 2-worker delete hit ConcurrentModificationException 138 times (retried by
+  with_backoff). One batch exhausted all 6 attempts, and its bucket was re-run with
+  a single worker. These are unrelated to the rebuild and occurred before it started.
+
+Minor observation:
+  GetStorageInfo quad counts varied slightly with no client workload running
+  (5,664,092 before; 5,667,156 at 17:58Z; 5,665,124 at 18:33Z). Recorded as reported.
+
+Known script gaps found in this run (this run used src/ BEFORE the fixes below)
+  - src/storage_info.summarize() printed only totalStorageBytesUsed, because it did
+    not read the nested {sizeInBytes, count} response shape. The per-component table
+    above was built from the raw response.
+  - src/index_rebuild.with_backoff() did not cover client-side ReadTimeoutError.
+  Both were fixed in src/ after this run. summarize() now walks the nested shape
+  (using dictionaries.total so blobs are not double-counted), and with_backoff()
+  now retries ReadTimeoutError and ConnectTimeoutError. The numbers in this file
+  are unaffected.
+
+Identifiers (account ID, cluster endpoint, bucket) are redacted as <placeholders>.
+
+Raw evidence: results/run-20261111-raw/ (results.json, run-1 backup, post-load
+storage JSON, and load/delete/reclaim/resume logs).

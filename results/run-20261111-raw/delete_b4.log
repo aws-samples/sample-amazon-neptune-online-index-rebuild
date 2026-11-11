@@ -1,0 +1,4 @@
+2026-11-11T17:37:17Z [delete] deleting buckets [4] batch=2000 workers=1
+2026-11-11T17:39:23Z [delete] batches=25 vertices_deleted=50000
+2026-11-11T17:40:06Z [delete] bucket 4 empty
+2026-11-11T17:40:06Z [delete] DONE vertices_deleted=68000 batches=35

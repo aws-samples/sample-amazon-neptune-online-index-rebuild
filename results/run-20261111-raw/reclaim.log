@@ -1,0 +1,116 @@
+2026-11-11T17:40:30Z engine version 1.5.0.0
+2026-11-11T17:40:30Z === Step 1: baseline ===
+Component                         Size (GiB)
+---------------------------------------------
+totalStorageBytesUsed                  4.55
+---------------------------------------------
+totalStorageBytesUsed                  4.55
+2026-11-11T17:40:32Z raw totalStorageBytesUsed BEFORE = 4885970944
+2026-11-11T17:40:32Z CloudWatch VolumeBytesUsed BEFORE = {'t': '2026-11-11T17:05:00Z', 'gib': 2.155792236328125, 'bytes': 2314764288.0}
+2026-11-11T17:40:32Z concurrent workload started
+2026-11-11T17:40:32Z === Step 2: start_index_rebuild scope=QUADS at 2026-11-11T17:40:32Z ===
+2026-11-11T17:40:32Z rebuildId=e6bc556e-ef7b-40b8-b782-7f4d7fa3fdce
+2026-11-11T17:40:32Z === Step 3: monitor ===
+2026-11-11T17:40:32Z [status] e6bc556e-ef7b-40b8-b782-7f4d7fa3fdce: REBUILDING progress=0 eta=2026-11-11 17:40:40.528000+00:00
+2026-11-11T17:40:47Z [raw-error] ExecuteOpenCypherQuery -> InternalFailureException (HTTP 500)
+2026-11-11T17:40:58Z [raw-error] ExecuteOpenCypherQuery -> CancelledByUserException (HTTP 500)
+2026-11-11T17:41:02Z [raw-error] ExecuteOpenCypherQuery -> InternalFailureException (HTTP 500)
+2026-11-11T17:41:02Z [raw-error] ExecuteOpenCypherQuery -> CancelledByUserException (HTTP 500)
+2026-11-11T17:41:02Z [status] e6bc556e-ef7b-40b8-b782-7f4d7fa3fdce: REBUILDING progress=48 eta=2026-11-11 17:41:34.185000+00:00
+2026-11-11T17:41:06Z [raw-error] ExecuteOpenCypherQuery -> InternalFailureException (HTTP 500)
+2026-11-11T17:41:06Z [raw-error] ExecuteOpenCypherQuery -> InternalFailureException (HTTP 500)
+2026-11-11T17:41:32Z [status] e6bc556e-ef7b-40b8-b782-7f4d7fa3fdce: REBUILDING progress=62 eta=2026-11-11 17:42:08.689000+00:00
+2026-11-11T17:42:02Z [status] e6bc556e-ef7b-40b8-b782-7f4d7fa3fdce: REBUILDING progress=62 eta=2026-11-11 17:42:56.669000+00:00
+2026-11-11T17:45:33Z [status] ERROR ReadTimeoutError('Read timeout on endpoint URL: "https://<cluster-endpoint>:8182/storage/indexes/rebuilds/e6bc556e-ef7b-40b8-b782-7f4d7fa3fdce"')
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/urllib3/connectionpool.py", line 540, in _make_request
+    response = conn.getresponse()
+               ^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/urllib3/connection.py", line 638, in getresponse
+    httplib_response = super().getresponse()
+                       ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/http/client.py", line 1478, in getresponse
+    response.begin()
+  File "/usr/lib64/python3.12/http/client.py", line 343, in begin
+    version, status, reason = self._read_status()
+                              ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/http/client.py", line 304, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/socket.py", line 720, in readinto
+    return self._sock.recv_into(b)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/ssl.py", line 1264, in recv_into
+    return self.read(nbytes, buffer)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib64/python3.12/ssl.py", line 1116, in read
+    return self._sslobj.read(len, buffer)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TimeoutError: The read operation timed out
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/botocore/httpsession.py", line 509, in send
+    urllib_response = conn.urlopen(
+                      ^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/urllib3/connectionpool.py", line 847, in urlopen
+    retries = retries.increment(
+              ^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/urllib3/util/retry.py", line 485, in increment
+    raise reraise(type(error), error, _stacktrace)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/urllib3/util/util.py", line 39, in reraise
+    raise value
+  File "/usr/local/lib/python3.12/site-packages/urllib3/connectionpool.py", line 793, in urlopen
+    response = self._make_request(
+               ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/urllib3/connectionpool.py", line 542, in _make_request
+    self._raise_timeout(err=e, url=url, timeout_value=read_timeout)
+  File "/usr/local/lib/python3.12/site-packages/urllib3/connectionpool.py", line 373, in _raise_timeout
+    raise ReadTimeoutError(
+urllib3.exceptions.ReadTimeoutError: AWSHTTPSConnectionPool(host='<cluster-endpoint>', port=8182): Read timed out. (read timeout=60)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/run/repo/scripts/run_reclaim.py", line 308, in <module>
+    main()
+  File "/opt/run/repo/scripts/run_reclaim.py", line 235, in main
+    st = get_index_rebuild_status(a.endpoint, a.region, rebuild_id)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/run/repo/scripts/../src/index_rebuild.py", line 137, in get_index_rebuild_status
+    return with_backoff(
+           ^^^^^^^^^^^^^
+  File "/opt/run/repo/scripts/../src/index_rebuild.py", line 73, in with_backoff
+    return fn()
+           ^^^^
+  File "/opt/run/repo/scripts/../src/index_rebuild.py", line 138, in <lambda>
+    lambda: client.get_index_rebuild_status(rebuildId=operation_id)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/botocore/client.py", line 606, in _api_call
+    return self._make_api_call(operation_name, kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/botocore/context.py", line 123, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/botocore/client.py", line 1076, in _make_api_call
+    http, parsed_response = self._make_request(
+                            ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/botocore/client.py", line 1100, in _make_request
+    return self._endpoint.make_request(operation_model, request_dict)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/botocore/endpoint.py", line 119, in make_request
+    return self._send_request(request_dict, operation_model)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/botocore/endpoint.py", line 231, in _send_request
+    raise exception
+  File "/usr/local/lib/python3.12/site-packages/botocore/endpoint.py", line 281, in _do_get_response
+    http_response = self._send(request)
+                    ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/botocore/endpoint.py", line 385, in _send
+    return self.http_session.send(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/site-packages/botocore/httpsession.py", line 548, in send
+    raise ReadTimeoutError(endpoint_url=request.url, error=e)
+botocore.exceptions.ReadTimeoutError: Read timeout on endpoint URL: "https://<cluster-endpoint>:8182/storage/indexes/rebuilds/e6bc556e-ef7b-40b8-b782-7f4d7fa3fdce"

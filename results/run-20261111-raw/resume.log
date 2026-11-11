@@ -1,0 +1,17 @@
+2026-11-11T17:58:03Z resuming monitor for e6bc556e-ef7b-40b8-b782-7f4d7fa3fdce; original start 2026-11-11T17:40:32Z
+2026-11-11T17:58:03Z [status] COMPLETED progress=100 eta=None
+2026-11-11T17:58:03Z terminal COMPLETED at 2026-11-11T17:58:03Z; wall duration 1052s; service startTime=2026-11-11 17:40:32.674000+00:00 endTime=2026-11-11 17:56:31.055000+00:00 failureReason=None
+2026-11-11T17:58:03Z [probe] post-rebuild RETURN 1 ok=True 0.03s 
+Storage comparison (GetStorageInfo)
+---------------------------------------------
+Before total:         4.55 GiB
+After  total:         2.03 GiB
+Reclaimed:            2.52 GiB (55.4%)
+2026-11-11T17:58:06Z waiting for CloudWatch VolumeBytesUsed datapoints after rebuild end
+2026-11-11T17:58:06Z [cw] latest={'t': '2026-11-11T17:03:00Z', 'gib': 2.155792236328125, 'bytes': 2314764288.0} post-rebuild points=0
+2026-11-11T18:03:06Z [cw] latest={'t': '2026-11-11T17:58:00Z', 'gib': 3.4889373779296875, 'bytes': 3746217984.0} post-rebuild points=0
+2026-11-11T18:08:06Z [cw] latest={'t': '2026-11-11T17:58:00Z', 'gib': 3.4889373779296875, 'bytes': 3746217984.0} post-rebuild points=0
+2026-11-11T18:13:06Z [cw] latest={'t': '2026-11-11T17:58:00Z', 'gib': 3.4889373779296875, 'bytes': 3746217984.0} post-rebuild points=0
+2026-11-11T18:18:06Z [cw] latest={'t': '2026-11-11T17:58:00Z', 'gib': 3.4889373779296875, 'bytes': 3746217984.0} post-rebuild points=0
+2026-11-11T18:23:06Z [cw] latest={'t': '2026-11-11T17:58:00Z', 'gib': 3.4889373779296875, 'bytes': 3746217984.0} post-rebuild points=0
+2026-11-11T18:28:06Z [cw] latest={'t': '2026-11-11T17:58:00Z', 'gib': 3.4889373779296875, 'bytes': 3746217984.0} post-rebuild points=0

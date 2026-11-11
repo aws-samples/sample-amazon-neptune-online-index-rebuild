@@ -1,0 +1,179 @@
+{
+  "cluster_id": "neptune-blog-reclaim",
+  "region": "us-east-1",
+  "scope": "QUADS",
+  "polls": [
+    {
+      "t": "2026-11-11T17:40:32Z",
+      "status": "REBUILDING",
+      "progressPercentage": 0,
+      "estimatedEndTime": "2026-11-11 17:40:40.528000+00:00"
+    },
+    {
+      "t": "2026-11-11T17:41:02Z",
+      "status": "REBUILDING",
+      "progressPercentage": 48,
+      "estimatedEndTime": "2026-11-11 17:41:34.185000+00:00"
+    },
+    {
+      "t": "2026-11-11T17:41:32Z",
+      "status": "REBUILDING",
+      "progressPercentage": 62,
+      "estimatedEndTime": "2026-11-11 17:42:08.689000+00:00"
+    },
+    {
+      "t": "2026-11-11T17:42:02Z",
+      "status": "REBUILDING",
+      "progressPercentage": 62,
+      "estimatedEndTime": "2026-11-11 17:42:56.669000+00:00"
+    }
+  ],
+  "errors": [
+    "2026-11-11T17:45:33Z get_index_rebuild_status: ReadTimeoutError('Read timeout on endpoint URL: \"https://<cluster-endpoint>:8182/storage/indexes/rebuilds/e6bc556e-ef7b-40b8-b782-7f4d7fa3fdce\"')"
+  ],
+  "engine_version": "1.5.0.0",
+  "before_storage_info": {
+    "ResponseMetadata": {
+      "RequestId": "8ed0e5d9-356f-acb0-67be-84bfbf9332aa",
+      "HTTPStatusCode": 200,
+      "HTTPHeaders": {
+        "content-type": "application/json; charset=UTF-8",
+        "content-length": "419",
+        "x-amzn-requestid": "8ed0e5d9-356f-acb0-67be-84bfbf9332aa",
+        "connection": "keep-alive"
+      },
+      "RetryAttempts": 0
+    },
+    "totalStorageBytesUsed": 4885970944,
+    "quads": {
+      "PG": {
+        "SPOG": {
+          "sizeInBytes": 1374896128,
+          "count": 5664092
+        },
+        "POGS": {
+          "sizeInBytes": 1239220224,
+          "count": 5664092
+        },
+        "GPSO": {
+          "sizeInBytes": 975585280,
+          "count": 5664092
+        }
+      }
+    },
+    "dictionaries": {
+      "total": {
+        "sizeInBytes": 755957760,
+        "count": 4910411
+      }
+    },
+    "undoLogs": {
+      "sizeInBytes": 536870912,
+      "listSize": 1514
+    },
+    "dfeStatistics": {
+      "sizeInBytes": 131072,
+      "count": 42
+    },
+    "internals": {
+      "sizeInBytes": 884736,
+      "count": 659
+    }
+  },
+  "before_components": {
+    "totalStorageBytesUsed": 4885970944,
+    "dictionaries": 755957760,
+    "undoLogs": 536870912,
+    "dfeStatistics": 131072,
+    "internals": 884736,
+    "quads.PG.SPOG": 1374896128,
+    "quads.PG.POGS": 1239220224,
+    "quads.PG.GPSO": 975585280
+  },
+  "cw_before_series": [
+    {
+      "t": "2026-11-11T17:05:00Z",
+      "gib": 2.155792236328125,
+      "bytes": 2314764288.0
+    }
+  ],
+  "cw_before": {
+    "t": "2026-11-11T17:05:00Z",
+    "gib": 2.155792236328125,
+    "bytes": 2314764288.0
+  },
+  "raw_error_counts": {
+    "InternalFailureException": 4,
+    "CancelledByUserException": 2
+  },
+  "wall_start_utc": "2026-11-11T17:40:32Z",
+  "rebuild_id": "e6bc556e-ef7b-40b8-b782-7f4d7fa3fdce",
+  "resume": {
+    "resumed_at": "2026-11-11T17:58:03Z",
+    "polls": [
+      {
+        "t": "2026-11-11T17:58:03Z",
+        "status": "COMPLETED",
+        "progressPercentage": 100,
+        "estimatedEndTime": null
+      }
+    ],
+    "status_poll_errors": [],
+    "query_probes": [],
+    "post_rebuild_probe": {
+      "t": "2026-11-11T17:58:03Z",
+      "ok": true,
+      "seconds": 0.03,
+      "error": null
+    }
+  },
+  "final_status": {
+    "status": "COMPLETED",
+    "scope": "QUADS",
+    "concurrency": 1,
+    "writeBufferSize": "LOW",
+    "startTime": "2026-11-11 17:40:32.674000+00:00",
+    "progressPercentage": 100,
+    "endTime": "2026-11-11 17:56:31.055000+00:00"
+  },
+  "wall_end_utc": "2026-11-11T17:58:03Z",
+  "wall_duration_seconds": 1051.793254,
+  "after_storage_info": {
+    "totalStorageBytesUsed": 2180857856,
+    "quads": {
+      "PG": {
+        "SPOG": {
+          "sizeInBytes": 294649856,
+          "count": 5667156
+        },
+        "POGS": {
+          "sizeInBytes": 292438016,
+          "count": 5667156
+        },
+        "GPSO": {
+          "sizeInBytes": 297500672,
+          "count": 5667156
+        }
+      }
+    },
+    "dictionaries": {
+      "total": {
+        "sizeInBytes": 755957760,
+        "count": 5040735
+      }
+    },
+    "undoLogs": {
+      "sizeInBytes": 536870912,
+      "listSize": 3306
+    },
+    "dfeStatistics": {
+      "sizeInBytes": 131072,
+      "count": 42
+    },
+    "internals": {
+      "sizeInBytes": 884736,
+      "count": 659
+    }
+  },
+  "after_t": "2026-11-11T17:58:06Z"
+}

@@ -1,0 +1,275 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Test infrastructure for the Neptune online index rebuild blog run.
+  Neptune 1.5.0.0 cluster (private subnets, IAM auth, encrypted) + an SSM-managed
+  EC2 runner in the same VPC + S3 bucket for bulk-load data. NOT for production.
+  Delete the stack when finished to stop all charges.
+
+Parameters:
+  EngineVersion:
+    Type: String
+    Default: "1.5.0.0"
+  NeptuneInstanceClass:
+    Type: String
+    Default: db.r6g.large
+  RunnerInstanceType:
+    Type: String
+    Default: t3.micro
+  RunnerAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+  # ---------------------------------------------------------------- Network
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: neptune-blog-vpc }]
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags: [{ Key: Name, Value: neptune-blog-private-a }]
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags: [{ Key: Name, Value: neptune-blog-private-b }]
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: neptune-blog-public }]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  PrivateSubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Free gateway endpoint so the Neptune bulk loader can read from S3.
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: Gateway
+      RouteTableIds: [!Ref PrivateRouteTable, !Ref PublicRouteTable]
+
+  # ---------------------------------------------------------------- Security groups
+  RunnerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Neptune blog runner - no inbound; access via SSM only
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
+  NeptuneSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Neptune blog cluster - 8182 from runner only
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8182
+          ToPort: 8182
+          SourceSecurityGroupId: !Ref RunnerSecurityGroup
+
+  # ---------------------------------------------------------------- S3 + loader role
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+
+  DataBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DataBucket
+      PolicyDocument:
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource: [!GetAtt DataBucket.Arn, !Sub "${DataBucket.Arn}/*"]
+            Condition: { Bool: { aws:SecureTransport: "false" } }
+
+  NeptuneLoaderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: rds.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: read-load-bucket
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:ListBucket, s3:GetBucketLocation]
+                Resource: [!GetAtt DataBucket.Arn, !Sub "${DataBucket.Arn}/*"]
+
+  # ---------------------------------------------------------------- Neptune
+  NeptuneSubnetGroup:
+    Type: AWS::Neptune::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Neptune blog private subnets
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+
+  NeptuneCluster:
+    Type: AWS::Neptune::DBCluster
+    Properties:
+      DBClusterIdentifier: neptune-blog-reclaim
+      EngineVersion: !Ref EngineVersion
+      DBSubnetGroupName: !Ref NeptuneSubnetGroup
+      VpcSecurityGroupIds: [!Ref NeptuneSecurityGroup]
+      IamAuthEnabled: true
+      StorageEncrypted: true
+      DeletionProtection: false
+      BackupRetentionPeriod: 1
+      AssociatedRoles:
+        - RoleArn: !GetAtt NeptuneLoaderRole.Arn
+
+  NeptuneWriter:
+    Type: AWS::Neptune::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref NeptuneCluster
+      DBInstanceClass: !Ref NeptuneInstanceClass
+      DBInstanceIdentifier: neptune-blog-reclaim-writer
+
+  # ---------------------------------------------------------------- Runner EC2
+  RunnerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: neptune-blog-runner
+          PolicyDocument:
+            Statement:
+              - Sid: NeptuneDataPlaneThisClusterOnly
+                Effect: Allow
+                Action: neptune-db:*
+                Resource: !Sub "arn:aws:neptune-db:${AWS::Region}:${AWS::AccountId}:${NeptuneCluster.ClusterResourceId}/*"
+              - Sid: LoadBucket
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:ListBucket, s3:DeleteObject]
+                Resource: [!GetAtt DataBucket.Arn, !Sub "${DataBucket.Arn}/*"]
+              - Sid: CloudWatchRead
+                Effect: Allow
+                Action: [cloudwatch:GetMetricStatistics, cloudwatch:GetMetricData]
+                Resource: "*"
+              - Sid: DescribeCluster
+                Effect: Allow
+                Action: [rds:DescribeDBClusters]
+                Resource: "*"
+
+  RunnerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref RunnerRole]
+
+  RunnerInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: PublicDefaultRoute
+    Properties:
+      ImageId: !Ref RunnerAmi
+      InstanceType: !Ref RunnerInstanceType
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds: [!Ref RunnerSecurityGroup]
+      IamInstanceProfile: !Ref RunnerInstanceProfile
+      MetadataOptions:
+        HttpTokens: required
+        HttpEndpoint: enabled
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs: { VolumeSize: 30, VolumeType: gp3, Encrypted: true }
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf install -y python3-pip git
+          pip3 install "boto3==1.43.53" "requests==2.32.3"
+      Tags: [{ Key: Name, Value: neptune-blog-runner }]
+
+Outputs:
+  ClusterIdentifier:
+    Value: !Ref NeptuneCluster
+  ClusterEndpoint:
+    Value: !GetAtt NeptuneCluster.Endpoint
+  ClusterResourceId:
+    Value: !GetAtt NeptuneCluster.ClusterResourceId
+  LoaderRoleArn:
+    Value: !GetAtt NeptuneLoaderRole.Arn
+  DataBucketName:
+    Value: !Ref DataBucket
+  RunnerInstanceId:
+    Value: !Ref RunnerInstance

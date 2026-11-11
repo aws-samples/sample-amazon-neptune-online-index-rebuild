@@ -131,17 +131,23 @@ Resources:
 
   # ---------------------------------------------------------------- S3 + loader role
   # Destination for S3 server access logs of DataBucket.
+  # It also logs its own access to itself (no DestinationBucketName = same bucket).
+  # Log delivery to a bucket that itself has logging enabled produces logs about
+  # log writes, so the lifecycle rule below expires log objects to bound growth.
   AccessLogsBucket:
     Type: AWS::S3::Bucket
-    Metadata:
-      guard:
-        SuppressedRules:
-          - S3_BUCKET_LOGGING_ENABLED
-      checkov:
-        skip:
-          - id: CKV_AWS_18
-            comment: This is the access-log destination bucket; logging it to itself would create a log loop.
     Properties:
+      LoggingConfiguration:
+        LogFilePrefix: self-access-logs/
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireAccessLogs
+            Status: Enabled
+            ExpirationInDays: 30
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
@@ -173,7 +179,9 @@ Resources:
             Effect: Allow
             Principal: { Service: logging.s3.amazonaws.com }
             Action: s3:PutObject
-            Resource: !Sub "${AccessLogsBucket.Arn}/access-logs/*"
+            Resource:
+              - !Sub "${AccessLogsBucket.Arn}/access-logs/*"
+              - !Sub "${AccessLogsBucket.Arn}/self-access-logs/*"
             Condition:
               StringEquals: { aws:SourceAccount: !Ref AWS::AccountId }
 
@@ -269,22 +277,42 @@ Resources:
         - PolicyName: neptune-blog-runner
           PolicyDocument:
             Statement:
-              - Sid: NeptuneDataPlaneThisClusterOnly
+              # Only the Neptune data-plane actions the scripts call, on this cluster only.
+              - Sid: NeptuneStorageAndIndexRebuild
                 Effect: Allow
-                Action: neptune-db:*
-                Resource: !Sub "arn:aws:neptune-db:${AWS::Region}:${AWS::AccountId}:${NeptuneCluster.ClusterResourceId}/*"
+                Action:
+                  - neptune-db:GetStorageInfo
+                  - neptune-db:StartIndexRebuild
+                  - neptune-db:GetIndexRebuildStatus
+                  - neptune-db:CancelIndexRebuild
+                Resource: !Sub "arn:${AWS::Partition}:neptune-db:${AWS::Region}:${AWS::AccountId}:${NeptuneCluster.ClusterResourceId}/*"
+              - Sid: NeptuneBulkLoad
+                Effect: Allow
+                Action:
+                  - neptune-db:StartLoaderJob
+                  - neptune-db:GetLoaderJobStatus
+                Resource: !Sub "arn:${AWS::Partition}:neptune-db:${AWS::Region}:${AWS::AccountId}:${NeptuneCluster.ClusterResourceId}/*"
+              # openCypher MATCH/RETURN (read), SET (write), DETACH DELETE (delete).
+              - Sid: NeptuneQueries
+                Effect: Allow
+                Action:
+                  - neptune-db:ReadDataViaQuery
+                  - neptune-db:WriteDataViaQuery
+                  - neptune-db:DeleteDataViaQuery
+                Resource: !Sub "arn:${AWS::Partition}:neptune-db:${AWS::Region}:${AWS::AccountId}:${NeptuneCluster.ClusterResourceId}/*"
               - Sid: LoadBucket
                 Effect: Allow
-                Action: [s3:GetObject, s3:PutObject, s3:ListBucket, s3:DeleteObject]
+                Action: [s3:GetObject, s3:PutObject, s3:ListBucket]
                 Resource: [!GetAtt DataBucket.Arn, !Sub "${DataBucket.Arn}/*"]
+              # CloudWatch metric reads do not support resource-level permissions.
               - Sid: CloudWatchRead
                 Effect: Allow
                 Action: [cloudwatch:GetMetricStatistics, cloudwatch:GetMetricData]
                 Resource: "*"
-              - Sid: DescribeCluster
+              - Sid: DescribeThisCluster
                 Effect: Allow
                 Action: [rds:DescribeDBClusters]
-                Resource: "*"
+                Resource: !Sub "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${NeptuneCluster}"
 
   RunnerInstanceProfile:
     Type: AWS::IAM::InstanceProfile

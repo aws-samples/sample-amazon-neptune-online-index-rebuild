@@ -41,24 +41,46 @@ def get_storage_info(endpoint, region, port=8182):
 def summarize(storage_info):
     """Return a human-readable per-component storage summary.
 
+    The GetStorageInfo response nests sizes as {"sizeInBytes": ..., "count": ...}
+    leaves at varying depths (for example storage_info["quads"]["PG"]["SPOG"]
+    ["sizeInBytes"]). This walks the tree, sums every sizeInBytes leaf under each
+    top-level component, and prints the totals in GiB.
+
     Args:
         storage_info: The dict returned by get_storage_info().
 
     Returns:
         str: A formatted table of components and their sizes in GiB.
     """
+    gib = 1024 ** 3
+
+    def sum_bytes(node):
+        """Recursively sum every sizeInBytes leaf under a node.
+
+        If a node has a "total" child (as dictionaries does), use it and skip the
+        siblings: dictionaries.blobs is already included in dictionaries.total,
+        so adding it again would double-count.
+        """
+        if isinstance(node, dict):
+            if "sizeInBytes" in node and isinstance(node["sizeInBytes"], (int, float)):
+                return node["sizeInBytes"]
+            if isinstance(node.get("total"), dict):
+                return sum_bytes(node["total"])
+            return sum(sum_bytes(v) for v in node.values())
+        return 0
+
     lines = ["Component                         Size (GiB)", "-" * 45]
-    components = storage_info.get("storageBreakdown", storage_info)
+    for name, node in storage_info.items():
+        if name == "totalStorageBytesUsed":
+            continue
+        size = sum_bytes(node)
+        if size:
+            lines.append(f"{name:<32} {size / gib:>10.2f}")
+
     total = storage_info.get("totalStorageBytesUsed")
-
-    if isinstance(components, dict):
-        for name, value in sorted(components.items()):
-            if isinstance(value, (int, float)):
-                lines.append(f"{name:<32} {value / (1024 ** 3):>10.2f}")
-
     if total is not None:
         lines.append("-" * 45)
-        lines.append(f"{'totalStorageBytesUsed':<32} {total / (1024 ** 3):>10.2f}")
+        lines.append(f"{'totalStorageBytesUsed':<32} {total / gib:>10.2f}")
     return "\n".join(lines)
 
 

@@ -24,7 +24,7 @@ import random
 import time
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ReadTimeoutError, ConnectTimeoutError
 
 # Target scopes accepted by the rebuild API.
 VALID_SCOPES = ("ALL", "QUADS", "DICTIONARIES")
@@ -50,7 +50,8 @@ def _neptune_client(endpoint, region, port=8182):
 def with_backoff(fn, *, max_attempts=6, base_delay=1.0, max_delay=30.0):
     """Call fn() with exponential backoff + jitter on retriable Neptune errors.
 
-    Retries only on CancelledByMaintenanceException / ConcurrentModificationException.
+    Retries on CancelledByMaintenanceException / ConcurrentModificationException,
+    and on transient client-side ReadTimeoutError / ConnectTimeoutError.
     All other errors propagate immediately.
 
     Args:
@@ -71,6 +72,17 @@ def with_backoff(fn, *, max_attempts=6, base_delay=1.0, max_delay=30.0):
         attempt += 1
         try:
             return fn()
+        except (ReadTimeoutError, ConnectTimeoutError) as err:
+            # Client-side timeouts can happen transiently during a rebuild
+            # (for example a slow status poll). Treat them as retriable.
+            if attempt >= max_attempts:
+                raise
+            delay = random.uniform(0, min(max_delay, base_delay * (2 ** (attempt - 1))))
+            print(
+                f"[retry] {type(err).__name__} on attempt "
+                f"{attempt}/{max_attempts}; backing off {delay:.1f}s"
+            )
+            time.sleep(delay)
         except ClientError as err:
             code = err.response.get("Error", {}).get("Code", "")
             if code not in RETRIABLE_ERRORS or attempt >= max_attempts:

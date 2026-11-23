@@ -1,23 +1,73 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Test infrastructure for the Neptune online index rebuild blog run.
-  Neptune 1.5.0.0 cluster (private subnets, IAM auth, encrypted) + an SSM-managed
+  Neptune 1.5.x cluster (private subnets, IAM auth, encrypted) + an SSM-managed
   EC2 runner in the same VPC + S3 bucket for bulk-load data. NOT for production.
-  Delete the stack when finished to stop all charges.
+  Deploy it once per cluster (for example a main cluster and a streams cluster) with
+  different parameters; names default from the stack name so stacks do not collide.
+  The neptune_lab_mode and neptune_streams* settings are static cluster parameters:
+  after changing them, reboot the writer for them to take effect.
+  Delete the stack when finished to stop all charges (python scripts/teardown.py).
 
 Parameters:
   EngineVersion:
     Type: String
-    Default: "1.5.0.0"
+    Default: "1.5.0.1"
+    Description: 1.5.0.0 or later; 1.5.0.1 recommended.
   NeptuneInstanceClass:
     Type: String
     Default: db.r6g.large
+    Description: >
+      Use db.r6g.2xlarge or larger to exercise dictionary garbage collection,
+      which pauses when freeable memory is below 15 GB.
+  ClusterIdentifier:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-z][a-z0-9-]{0,39}$"
+    Description: >
+      DB cluster identifier. Empty = use the stack name, so the stack name must then be
+      lowercase letters, digits and hyphens, start with a letter, and be at most 40
+      characters.
+  WriterInstanceIdentifier:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[a-z][a-z0-9-]{0,49}$"
+    Description: Writer instance identifier. Empty = "<stack name>-writer".
+  ParameterGroupFamily:
+    Type: String
+    AllowedPattern: "^neptune[0-9.]*$"
+    Description: >
+      DB cluster parameter group family for EngineVersion, for example neptune1.4. No
+      default on purpose: look it up with
+      aws neptune describe-db-engine-versions --engine neptune --engine-version <EngineVersion>
+      --query "DBEngineVersions[].DBParameterGroupFamily".
+  LabMode:
+    Type: String
+    Default: ""
+    Description: >
+      Value for neptune_lab_mode, for example DictionaryGCMode=soft_delete. Empty = not
+      set. Static: reboot the writer after changing it.
+  StreamsEnabled:
+    Type: String
+    Default: "0"
+    AllowedValues: ["0", "1"]
+    Description: "Value for neptune_streams. Static parameter: reboot the writer after changing it."
+  StreamsExpiryDays:
+    Type: String
+    Default: "7"
+    AllowedPattern: "^[0-9]{1,2}$"
+    Description: Value for neptune_streams_expiry_days (only matters when streams are on).
   RunnerInstanceType:
     Type: String
     Default: t3.micro
   RunnerAmi:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Conditions:
+  ClusterNameFromStack: !Equals [!Ref ClusterIdentifier, ""]
+  WriterNameFromStack: !Equals [!Ref WriterInstanceIdentifier, ""]
+  HasLabMode: !Not [!Equals [!Ref LabMode, ""]]
 
 Resources:
   # ---------------------------------------------------------------- Network
@@ -241,10 +291,22 @@ Resources:
       DBSubnetGroupDescription: Neptune blog private subnets
       SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
 
+  # Static cluster parameters: after changing them on a running cluster, reboot the writer.
+  NeptuneClusterParameterGroup:
+    Type: AWS::Neptune::DBClusterParameterGroup
+    Properties:
+      Description: !Sub "${AWS::StackName} cluster parameters (lab mode, streams)"
+      Family: !Ref ParameterGroupFamily
+      Parameters:
+        neptune_streams: !Ref StreamsEnabled
+        neptune_streams_expiry_days: !Ref StreamsExpiryDays
+        neptune_lab_mode: !If [HasLabMode, !Ref LabMode, !Ref "AWS::NoValue"]
+
   NeptuneCluster:
     Type: AWS::Neptune::DBCluster
     Properties:
-      DBClusterIdentifier: neptune-blog-reclaim
+      DBClusterIdentifier: !If [ClusterNameFromStack, !Ref "AWS::StackName", !Ref ClusterIdentifier]
+      DBClusterParameterGroupName: !Ref NeptuneClusterParameterGroup
       EngineVersion: !Ref EngineVersion
       DBSubnetGroupName: !Ref NeptuneSubnetGroup
       VpcSecurityGroupIds: [!Ref NeptuneSecurityGroup]
@@ -260,7 +322,7 @@ Resources:
     Properties:
       DBClusterIdentifier: !Ref NeptuneCluster
       DBInstanceClass: !Ref NeptuneInstanceClass
-      DBInstanceIdentifier: neptune-blog-reclaim-writer
+      DBInstanceIdentifier: !If [WriterNameFromStack, !Sub "${AWS::StackName}-writer", !Ref WriterInstanceIdentifier]
 
   # ---------------------------------------------------------------- Runner EC2
   RunnerRole:
@@ -284,13 +346,17 @@ Resources:
                   - neptune-db:GetStorageInfo
                   - neptune-db:StartIndexRebuild
                   - neptune-db:GetIndexRebuildStatus
+                  - neptune-db:ListIndexRebuilds
                   - neptune-db:CancelIndexRebuild
+                  - neptune-db:GetGraphSummary
+                  - neptune-db:GetEngineStatus
                 Resource: !Sub "arn:${AWS::Partition}:neptune-db:${AWS::Region}:${AWS::AccountId}:${NeptuneCluster.ClusterResourceId}/*"
               - Sid: NeptuneBulkLoad
                 Effect: Allow
                 Action:
                   - neptune-db:StartLoaderJob
                   - neptune-db:GetLoaderJobStatus
+                  - neptune-db:ListLoaderJobs
                 Resource: !Sub "arn:${AWS::Partition}:neptune-db:${AWS::Region}:${AWS::AccountId}:${NeptuneCluster.ClusterResourceId}/*"
               # openCypher MATCH/RETURN (read), SET (write), DETACH DELETE (delete).
               - Sid: NeptuneQueries
@@ -299,6 +365,14 @@ Resources:
                   - neptune-db:ReadDataViaQuery
                   - neptune-db:WriteDataViaQuery
                   - neptune-db:DeleteDataViaQuery
+                Resource: !Sub "arn:${AWS::Partition}:neptune-db:${AWS::Region}:${AWS::AccountId}:${NeptuneCluster.ClusterResourceId}/*"
+              # TEST STACK ONLY: lets storage_info.py --refresh-stats refresh statistics
+              # so the graph-summary live counts are fresh. Not needed for the rebuild.
+              - Sid: NeptuneStatisticsRefreshTestOnly
+                Effect: Allow
+                Action:
+                  - neptune-db:ManageStatistics
+                  - neptune-db:GetStatisticsStatus
                 Resource: !Sub "arn:${AWS::Partition}:neptune-db:${AWS::Region}:${AWS::AccountId}:${NeptuneCluster.ClusterResourceId}/*"
               - Sid: LoadBucket
                 Effect: Allow
@@ -313,6 +387,12 @@ Resources:
                 Effect: Allow
                 Action: [rds:DescribeDBClusters]
                 Resource: !Sub "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${NeptuneCluster}"
+              - Sid: DescribeForPreflight
+                Effect: Allow
+                Action: [rds:DescribeDBInstances, rds:DescribeDBClusterParameters]
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:db:*"
+                  - !Sub "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster-pg:*"
 
   RunnerInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -337,13 +417,21 @@ Resources:
       UserData:
         Fn::Base64: |
           #!/bin/bash
-          dnf install -y python3-pip git
-          pip3 install "boto3==1.43.53" "requests==2.32.3"
+          dnf install -y python3.12 python3.12-pip git
+          python3.12 -m pip install "boto3>=1.43.124"
       Tags: [{ Key: Name, Value: neptune-blog-runner }]
 
 Outputs:
   ClusterIdentifier:
     Value: !Ref NeptuneCluster
+  WriterInstanceIdentifier:
+    Value: !Ref NeptuneWriter
+  ClusterParameterGroupName:
+    Value: !Ref NeptuneClusterParameterGroup
+  ParameterChangeNote:
+    Value: >
+      neptune_lab_mode and neptune_streams* are static: after changing them in this
+      parameter group, reboot the writer (aws neptune reboot-db-instance) to apply them.
   ClusterEndpoint:
     Value: !GetAtt NeptuneCluster.Endpoint
   ClusterResourceId:

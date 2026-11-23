@@ -21,3 +21,7 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Test output (kept out of the public repo)
+results/
+.pytest_cache/

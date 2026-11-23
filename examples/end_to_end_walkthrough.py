@@ -1,86 +1,71 @@
 """
-end_to_end_walkthrough.py — Diagnose -> rebuild -> monitor -> verify, end to end.
+end_to_end_walkthrough.py - preflight -> diagnose -> rebuild -> monitor -> verify.
 
-This mirrors the workflow in the blog post:
-  1. Diagnose with GetStorageInfo (establish a baseline).
-  2. Reclaim with an online index rebuild (scoped, with retry handling).
-  3. Monitor by polling rebuild status until it completes.
-  4. Verify by re-running GetStorageInfo and comparing totals.
+Requires Neptune engine 1.5.0.0 or later (1.5.0.1 recommended), a provisioned
+writer, and Python 3.11+. Use the writer (or cluster) endpoint.
 
-Run against a Neptune cluster on engine release 1.5.0.0 or later.
-
-Example:
-  python examples/end_to_end_walkthrough.py \
-      --endpoint my-cluster.cluster-abc123.us-east-1.neptune.amazonaws.com \
-      --region us-east-1 \
-      --cluster-id my-neptune-cluster \
-      --scope QUADS
+  python examples/end_to_end_walkthrough.py --endpoint <writer-endpoint> \
+      --region us-east-1 --cluster-id my-neptune-cluster --scope QUADS
 """
 
 import argparse
+import json
 import os
 import sys
 
-# Make src/ importable when run from the repo root.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-
-from storage_info import get_storage_info, summarize          # noqa: E402
 from index_rebuild import start_index_rebuild, wait_for_completion  # noqa: E402
-from verify import compare_storage                            # noqa: E402
+from preflight import run as preflight  # noqa: E402
+from storage_info import get_storage_info, summarize  # noqa: E402
+from verify import compare_storage  # noqa: E402
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Neptune storage reclaim walkthrough.")
-    parser.add_argument("--endpoint", required=True, help="Neptune endpoint hostname")
-    parser.add_argument("--region", required=True, help="AWS region, e.g. us-east-1")
-    parser.add_argument("--port", type=int, default=8182, help="Neptune port")
-    parser.add_argument("--cluster-id", help="DBClusterIdentifier (for your records)")
-    parser.add_argument(
-        "--scope", default="ALL", choices=("ALL", "QUADS", "DICTIONARIES")
-    )
-    parser.add_argument("--concurrency", type=int, default=None)
-    parser.add_argument(
-        "--write-buffer-size", default=None, choices=("LOW", "MEDIUM", "HIGH")
-    )
-    parser.add_argument("--poll-seconds", type=int, default=30)
-    args = parser.parse_args()
+    ap = argparse.ArgumentParser(description="Neptune online index rebuild walkthrough.")
+    ap.add_argument("--endpoint", required=True)
+    ap.add_argument("--region", required=True)
+    ap.add_argument("--cluster-id", required=True)
+    ap.add_argument("--port", type=int, default=8182)
+    ap.add_argument("--scope", default="ALL", choices=("ALL", "QUADS", "DICTIONARIES"))
+    ap.add_argument("--concurrency", type=int)
+    ap.add_argument("--write-buffer-size", choices=("LOW", "MEDIUM", "HIGH"))
+    ap.add_argument("--poll-seconds", type=int, default=30)
+    ap.add_argument("--baseline-out", default="baseline.json")
+    ap.add_argument("--skip-preflight", action="store_true")
+    a = ap.parse_args()
 
-    # 1. Diagnose — baseline.
-    print("=== Step 1: Diagnose (baseline) ===")
-    before = get_storage_info(args.endpoint, args.region, args.port)
+    if not a.skip_preflight:
+        print("=== Preflight ===")
+        ok, warn, fail = preflight(a.endpoint, a.region, a.cluster_id, a.port)
+        for tag, items in (("OK  ", ok), ("WARN", warn), ("FAIL", fail)):
+            for i in items:
+                print(f"[{tag}] {i}")
+        if fail:
+            sys.exit("Preflight failed; fix the FAIL items before starting a rebuild.")
+
+    print("\n=== Step 1: Diagnose ===")
+    before = get_storage_info(a.endpoint, a.region, a.port)
+    with open(a.baseline_out, "w") as f:
+        json.dump(before, f, indent=2, default=str)
     print(summarize(before))
+    print(f"(baseline saved to {a.baseline_out})")
 
-    # 2. Reclaim — start the online index rebuild.
-    print(f"\n=== Step 2: Reclaim (online index rebuild, scope={args.scope}) ===")
-    op_id = start_index_rebuild(
-        args.endpoint,
-        args.region,
-        scope=args.scope,
-        concurrency=args.concurrency,
-        write_buffer_size=args.write_buffer_size,
-        port=args.port,
-    )
-    print(f"Started rebuild; operationId={op_id}")
+    print(f"\n=== Step 2: Reclaim (scope={a.scope}) ===")
+    rid = start_index_rebuild(a.endpoint, a.region, a.scope, a.concurrency,
+                              a.write_buffer_size, a.port)
+    print(f"rebuildId={rid}")
 
-    # 3. Monitor — poll to completion.
     print("\n=== Step 3: Monitor ===")
-    final = wait_for_completion(
-        args.endpoint, args.region, op_id, args.poll_seconds, args.port
-    )
-    state = (final.get("status") or final.get("state") or "UNKNOWN").upper()
-    print(f"Rebuild finished with state: {state}")
-    if state != "COMPLETED":
-        print("Rebuild did not complete successfully; skipping verification.")
-        sys.exit(1)
+    final = wait_for_completion(a.endpoint, a.region, rid, a.poll_seconds, a.port)
+    if (final.get("status") or "").upper() != "COMPLETED":
+        sys.exit(f"Rebuild ended with {final.get('status')}; skipping verification.")
 
-    # 4. Verify — compare storage.
     print("\n=== Step 4: Verify ===")
-    after = get_storage_info(args.endpoint, args.region, args.port)
+    after = get_storage_info(a.endpoint, a.region, a.port)
     print(compare_storage(before, after))
-    print(
-        "\nTip: also watch the CloudWatch VolumeBytesUsed metric for cluster "
-        f"'{args.cluster_id or '<your-cluster-id>'}' to confirm at the volume level."
-    )
+    print(f"\nNext: track VolumeBytesUsed for 24-72 hours:\n  python src/verify.py "
+          f"--endpoint {a.endpoint} --region {a.region} --cluster-id {a.cluster_id} "
+          f"--baseline {a.baseline_out}")
 
 
 if __name__ == "__main__":

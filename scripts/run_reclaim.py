@@ -27,7 +27,7 @@ import threading
 import time
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ConnectTimeoutError, ReadTimeoutError
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from storage_info import get_storage_info, summarize  # noqa: E402
@@ -38,6 +38,26 @@ from verify import compare_storage, get_volume_bytes_used  # noqa: E402
 GIB = 1024 ** 3
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED"}
 CBM = "CancelledByMaintenanceException"
+TIMEOUT_NAMES = ("ReadTimeoutError", "ConnectTimeoutError")
+
+# Every retry made by with_backoff, by error code (client timeouts appear under the
+# exception name). "management" = start/status/list calls; "workload" = the concurrent
+# queries. Filled through the on_retry hook and written to the results JSON.
+RETRY_COUNTS = {"management": collections.Counter(), "workload": collections.Counter()}
+RETRY_LOCK = threading.Lock()
+
+
+def retry_counter(kind):
+    """Return an on_retry callback that counts retries of one kind by error code."""
+    def on_retry(code, attempt, err):
+        with RETRY_LOCK:
+            RETRY_COUNTS[kind][code] += 1
+    return on_retry
+
+
+def retry_counts_snapshot():
+    with RETRY_LOCK:
+        return {k: dict(v) for k, v in RETRY_COUNTS.items()}
 
 
 def now():
@@ -86,6 +106,7 @@ class Workload:
         self.stats = collections.Counter()
         self.non_retriable = collections.Counter()
         self.workers = []
+        self.on_retry = retry_counter("workload")
 
     def _call(self, query, params):
         raised = collections.Counter()
@@ -99,7 +120,7 @@ class Workload:
                 raise
 
         try:
-            with_backoff(fn)
+            with_backoff(fn, on_retry=self.on_retry)
             ok = True
             final_code = None
         except ClientError as err:
@@ -111,18 +132,19 @@ class Workload:
         with self.lock:
             self.stats["queries"] += 1
             self.stats["succeeded" if ok else "failed"] += 1
+            # Error responses seen by this caller (retries per code are in RETRY_COUNTS).
             for code, n in raised.items():
                 self.stats[f"raised:{code}"] += n
-                if code in RETRIABLE_ERRORS:
-                    # with_backoff retries every retriable raise except an
-                    # exhausting final attempt.
-                    retried = n - (1 if final_code == code else 0)
-                    self.stats[f"retried_by_with_backoff:{code}"] += retried
             if final_code:
-                if final_code in RETRIABLE_ERRORS:
-                    self.stats[f"exhausted:{final_code}"] += 1
+                if final_code in RETRIABLE_ERRORS or final_code in TIMEOUT_NAMES:
+                    self.stats[f"exhausted:{final_code}"] += 1   # gave up after max attempts
                 else:
                     self.non_retriable[final_code] += 1
+
+    def snapshot(self):
+        """Thread-safe copy of the counters so far (written to the results JSON)."""
+        with self.lock:
+            return dict(self.stats), dict(self.non_retriable)
 
     def _loop(self, idx):
         rnd = random.Random(idx)
@@ -179,6 +201,10 @@ def main():
     ap.add_argument("--region", required=True)
     ap.add_argument("--cluster-id", required=True)
     ap.add_argument("--scope", default="QUADS", choices=("ALL", "QUADS", "DICTIONARIES"))
+    ap.add_argument("--concurrency", type=int, default=None,
+                    help="rebuild concurrency (service default 1; capped at the writer's vCPUs)")
+    ap.add_argument("--write-buffer-size", default=None, choices=("LOW", "MEDIUM", "HIGH"),
+                    help="rebuild writeBufferSize (service default LOW)")
     ap.add_argument("--poll-seconds", type=int, default=30)
     ap.add_argument("--load-threads", type=int, default=2)
     ap.add_argument("--cw-settle-max-min", type=int, default=90)
@@ -186,10 +212,19 @@ def main():
     a = ap.parse_args()
 
     R = {"cluster_id": a.cluster_id, "region": a.region, "scope": a.scope,
+         "requested": {"scope": a.scope, "concurrency": a.concurrency,
+                       "writeBufferSize": a.write_buffer_size},
          "polls": [], "errors": []}
+    state = {"wl": None, "finished": False}
 
     def save():
         R["raw_error_counts"] = dict(RAW_ERRORS)
+        R["retry_counts"] = retry_counts_snapshot()   # by error code, incl. timeouts
+        if state["finished"]:      # final numbers are in workload_stats; drop the interim copy
+            R.pop("workload_stats_so_far", None)
+            R.pop("workload_non_retriable_so_far", None)
+        elif state["wl"] is not None:
+            R["workload_stats_so_far"], R["workload_non_retriable_so_far"] = state["wl"].snapshot()
         with open(a.out, "w") as f:
             json.dump(R, f, indent=2, default=str)
 
@@ -212,46 +247,51 @@ def main():
 
     # 2-4. START, REBUILD, MONITOR (with concurrent load)
     wl = Workload(a.endpoint, a.region, threads=a.load_threads)
+    state["wl"] = wl
     wl.start()
     log("concurrent workload started")
+    mgmt_retry = retry_counter("management")
     t0 = now()
     R["wall_start_utc"] = iso(t0)
-    log(f"=== Step 2: start_index_rebuild scope={a.scope} at {iso(t0)} ===")
+    log(f"=== Step 2: start_index_rebuild scope={a.scope} concurrency={a.concurrency} "
+        f"writeBufferSize={a.write_buffer_size} at {iso(t0)} ===")
+    final = None
     try:
-        rebuild_id = start_index_rebuild(a.endpoint, a.region, scope=a.scope)
-    except Exception as err:
-        R["errors"].append(f"start_index_rebuild: {err!r}")
-        wl.finish()
+        rebuild_id = start_index_rebuild(
+            a.endpoint, a.region, scope=a.scope, concurrency=a.concurrency,
+            write_buffer_size=a.write_buffer_size, on_retry=mgmt_retry)
+        R["rebuild_id"] = rebuild_id
+        log(f"rebuildId={rebuild_id}")
+        save()
+
+        log("=== Step 3: monitor ===")
+        while True:
+            st = get_index_rebuild_status(a.endpoint, a.region, rebuild_id,
+                                          on_retry=mgmt_retry)
+            status = (st.get("status") or "").upper()
+            poll = {"t": iso(now()), "status": status,
+                    "progressPercentage": st.get("progressPercentage"),
+                    "estimatedEndTime": st.get("estimatedEndTime")}
+            R["polls"].append(poll)
+            log(f"[status] {rebuild_id}: {status} progress={poll['progressPercentage']} "
+                f"eta={poll['estimatedEndTime']}")
+            if status in TERMINAL:
+                final = st
+                break
+            save()
+            time.sleep(a.poll_seconds)
+    except BaseException as err:
+        # Always stop the workload and keep what was measured, then re-raise.
+        R["errors"].append(f"{iso(now())} aborted: {type(err).__name__}: {str(err)[:300]}")
+        log(f"[abort] {type(err).__name__}: {str(err)[:300]}")
+        stats, non_retriable = wl.finish()
+        state["finished"] = True
+        R["workload_stats"], R["workload_non_retriable_errors"] = stats, non_retriable
         save()
         raise
-    R["rebuild_id"] = rebuild_id
-    log(f"rebuildId={rebuild_id}")
-    save()
-
-    log("=== Step 3: monitor ===")
-    final = None
-    while True:
-        try:
-            st = get_index_rebuild_status(a.endpoint, a.region, rebuild_id)
-        except Exception as err:
-            R["errors"].append(f"{iso(now())} get_index_rebuild_status: {err!r}")
-            log(f"[status] ERROR {err!r}")
-            save()
-            raise
-        state = (st.get("status") or "").upper()
-        poll = {"t": iso(now()), "status": state,
-                "progressPercentage": st.get("progressPercentage"),
-                "estimatedEndTime": st.get("estimatedEndTime")}
-        R["polls"].append(poll)
-        log(f"[status] {rebuild_id}: {state} progress={poll['progressPercentage']} "
-            f"eta={poll['estimatedEndTime']}")
-        if state in TERMINAL:
-            final = st
-            break
-        save()
-        time.sleep(a.poll_seconds)
     t1 = now()
     stats, non_retriable = wl.finish()
+    state["finished"] = True
     log("concurrent workload stopped")
 
     R["wall_end_utc"] = iso(t1)

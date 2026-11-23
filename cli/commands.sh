@@ -1,70 +1,57 @@
 #!/usr/bin/env bash
 #
-# commands.sh — Equivalent AWS CLI invocations for the Neptune storage-reclaim
-# workflow. These mirror the boto3 code in ../src and use the `neptunedata`
-# command family (Neptune engine release 1.5.0.0 or later).
+# commands.sh - AWS CLI version of the workflow (neptunedata command family).
+# Requires AWS CLI v2, engine 1.5.0.0+ (1.5.0.1 recommended), a provisioned writer,
+# and network access to the WRITER endpoint from inside the VPC.
 #
-# Prereqs:
-#   - AWS CLI v2 configured with credentials that can reach the cluster.
-#   - Network access to the Neptune endpoint (run from within the VPC, e.g. an
-#     EC2 bastion or a VPC-attached environment).
-#   - IAM auth (if enabled) with neptune-db:* permissions for the actions below.
-#
-# Replace the placeholders before running.
+#   export NEPTUNE_ENDPOINT=<writer-or-cluster-endpoint>
+#   export AWS_REGION=us-east-1
+#   export NEPTUNE_CLUSTER_ID=my-neptune-cluster
+#   export REBUILD_SCOPE=QUADS        # ALL | QUADS | DICTIONARIES (default ALL)
+#   bash cli/commands.sh
 set -euo pipefail
 
-ENDPOINT="${NEPTUNE_ENDPOINT:-my-cluster.cluster-abc123.us-east-1.neptune.amazonaws.com}"
+: "${NEPTUNE_ENDPOINT:?set NEPTUNE_ENDPOINT}"
+: "${NEPTUNE_CLUSTER_ID:?set NEPTUNE_CLUSTER_ID}"
 REGION="${AWS_REGION:-us-east-1}"
 PORT="${NEPTUNE_PORT:-8182}"
-CLUSTER_ID="${NEPTUNE_CLUSTER_ID:-my-neptune-cluster}"
-SCOPE="${REBUILD_SCOPE:-ALL}"   # ALL | QUADS | DICTIONARIES
+SCOPE="${REBUILD_SCOPE:-ALL}"
+URL="https://${NEPTUNE_ENDPOINT}:${PORT}"
+NP=(--endpoint-url "${URL}" --region "${REGION}")
 
-NEPTUNE_URL="https://${ENDPOINT}:${PORT}"
+echo "=== Step 1: Diagnose - GetStorageInfo (saved to baseline.json) ==="
+aws neptunedata get-storage-info "${NP[@]}" | tee baseline.json
 
-echo "=== Step 1: Diagnose (baseline) — GetStorageInfo ==="
-aws neptunedata get-storage-info \
-  --endpoint-url "${NEPTUNE_URL}" \
-  --region "${REGION}"
+echo "=== Step 2: Reclaim - start-index-rebuild (scope=${SCOPE}) ==="
+REBUILD_ID="$(aws neptunedata start-index-rebuild "${NP[@]}" --scope "${SCOPE}" \
+  --query rebuildId --output text)"
+echo "rebuildId=${REBUILD_ID}"
 
-echo "=== Step 2: Reclaim — start online index rebuild (scope=${SCOPE}) ==="
-OP_JSON="$(aws neptunedata start-index-rebuild \
-  --endpoint-url "${NEPTUNE_URL}" \
-  --region "${REGION}" \
-  --scope "${SCOPE}")"
-echo "${OP_JSON}"
-OP_ID="$(echo "${OP_JSON}" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("rebuildId",""))')"
-echo "operationId=${OP_ID}"
-
-echo "=== Step 3: Monitor — poll index rebuild status ==="
-# Poll until the status is a terminal state (COMPLETED/FAILED/CANCELLED).
+echo "=== Step 3: Monitor ==="
+# States: PREPARING -> REBUILDING -> COMPLETED | FAILED; CANCELLING -> CANCELLED.
 while true; do
-  STATUS="$(aws neptunedata get-index-rebuild-status \
-    --endpoint-url "${NEPTUNE_URL}" \
-    --region "${REGION}" \
-    --rebuild-id "${OP_ID}")"
-  STATE="$(echo "${STATUS}" | python3 -c 'import sys,json;d=json.load(sys.stdin);print((d.get("status") or d.get("state") or "").upper())')"
-  echo "status: ${STATE}"
-  case "${STATE}" in
+  if ! LINE="$(aws neptunedata get-index-rebuild-status "${NP[@]}" --rebuild-id "${REBUILD_ID}" \
+      --query '[status, progressPercentage, estimatedEndTime, failureReason]' --output text)"; then
+    echo "status poll failed (often a transient timeout during a rebuild); retrying"
+    sleep 30; continue
+  fi
+  echo "status/progress/eta/failure: ${LINE}"
+  case "${LINE%%[[:space:]]*}" in
     COMPLETED|FAILED|CANCELLED) break ;;
   esac
   sleep 30
 done
 
-echo "=== Step 4: Verify — GetStorageInfo again + CloudWatch VolumeBytesUsed ==="
-aws neptunedata get-storage-info \
-  --endpoint-url "${NEPTUNE_URL}" \
-  --region "${REGION}"
+echo "=== Step 4: Verify - GetStorageInfo again ==="
+aws neptunedata get-storage-info "${NP[@]}" | tee after.json
 
-aws cloudwatch get-metric-statistics \
-  --namespace AWS/Neptune \
-  --metric-name VolumeBytesUsed \
-  --dimensions "Name=DBClusterIdentifier,Value=${CLUSTER_ID}" \
-  --start-time "$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-6H +%Y-%m-%dT%H:%M:%SZ)" \
+echo "=== VolumeBytesUsed, last 72 h (hourly). Re-run over the next 1-3 days. ==="
+aws cloudwatch get-metric-statistics --region "${REGION}" \
+  --namespace AWS/Neptune --metric-name VolumeBytesUsed \
+  --dimensions "Name=DBClusterIdentifier,Value=${NEPTUNE_CLUSTER_ID}" \
+  --start-time "$(date -u -d '72 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-72H +%Y-%m-%dT%H:%M:%SZ)" \
   --end-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --period 300 \
-  --statistics Average \
-  --region "${REGION}"
+  --period 3600 --statistics Average
 
-# To cancel an in-progress rebuild:
-#   aws neptunedata cancel-index-rebuild \
-#     --endpoint-url "${NEPTUNE_URL}" --region "${REGION}" --rebuild-id "${OP_ID}"
+# Cancel (CANCELLING can take hours):
+#   aws neptunedata cancel-index-rebuild "${NP[@]}" --rebuild-id "${REBUILD_ID}"

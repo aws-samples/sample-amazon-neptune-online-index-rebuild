@@ -1,71 +1,76 @@
 """
-index_rebuild.py — Run an Amazon Neptune online index rebuild with safe retry handling.
+index_rebuild.py - Start, monitor, and cancel an Amazon Neptune online index rebuild.
 
-Online index rebuild (Neptune engine release 1.5.0.0+) defragments quad and/or
-dictionary indexes and reclaims unused storage space *while the database stays
-fully operational* — concurrent reads and writes continue across Gremlin,
-openCypher, and SPARQL.
+Requires Neptune engine release 1.5.0.0 or later (1.5.0.1 recommended). Send every
+request to the WRITER endpoint; the writer must be a provisioned instance (online
+index rebuild is not supported on a Neptune Serverless writer).
 
-Key operational detail: requests can be cancelled when the storage layer briefly
-enters maintenance mode during a rebuild. The service raises
-CancelledByMaintenanceException, which should be treated like
-ConcurrentModificationException — i.e. it is retriable. This module wraps calls
-in exponential backoff so your application stays resilient during a rebuild.
+Retry note: this module retries the rebuild *management* calls. During a rebuild,
+your APPLICATION queries can also fail with CancelledByMaintenanceException; see
+src/query_retry.py for a pattern to copy into your Gremlin/openCypher/SPARQL code.
 
-Docs:
-  https://docs.aws.amazon.com/neptune/latest/userguide/storage-index-rebuild.html
-  https://docs.aws.amazon.com/neptune/latest/userguide/storage-cleanup.html
-
-Requires: Neptune engine release 1.5.0.0 or later.
+Docs: https://docs.aws.amazon.com/neptune/latest/userguide/storage-index-rebuild.html
 """
 
 import argparse
 import random
 import time
+import uuid
 
 import boto3
-from botocore.exceptions import ClientError, ReadTimeoutError, ConnectTimeoutError
+from botocore.exceptions import ClientError, ConnectTimeoutError, ReadTimeoutError
 
-# Target scopes accepted by the rebuild API.
 VALID_SCOPES = ("ALL", "QUADS", "DICTIONARIES")
 VALID_WRITE_BUFFER_SIZES = ("LOW", "MEDIUM", "HIGH")
+TERMINAL_STATES = {"COMPLETED", "FAILED", "CANCELLED"}
+ALL_STATES = ("PREPARING", "REBUILDING", "CANCELLING", "COMPLETED", "FAILED", "CANCELLED")
 
-# Exceptions that are safe to retry — the storage layer was briefly in
-# maintenance mode. Treat CancelledByMaintenanceException like
-# ConcurrentModificationException.
 RETRIABLE_ERRORS = (
     "CancelledByMaintenanceException",
     "ConcurrentModificationException",
+    "ThrottlingException",       # name used in the rebuild API docs
+    "TooManyRequestsException",  # name in the botocore neptunedata service model
 )
 
-
-def _neptune_client(endpoint, region, port=8182):
-    return boto3.client(
-        "neptunedata",
-        endpoint_url=f"https://{endpoint}:{port}",
-        region_name=region,
-    )
+# StartIndexRebuild errors that can mean "a rebuild is already running". The docs
+# say 409 ConflictException; the botocore model lists ConcurrentModificationException
+# for this operation instead, so both are treated as a hint to look for an active rebuild.
+ALREADY_RUNNING_CODES = ("ConflictException", "ConcurrentModificationException")
 
 
-def with_backoff(fn, *, max_attempts=6, base_delay=1.0, max_delay=30.0):
-    """Call fn() with exponential backoff + jitter on retriable Neptune errors.
+def neptune_client(endpoint, region, port=8182):
+    return boto3.client("neptunedata", endpoint_url=f"https://{endpoint}:{port}",
+                        region_name=region)
 
-    Retries on CancelledByMaintenanceException / ConcurrentModificationException,
-    and on transient client-side ReadTimeoutError / ConnectTimeoutError.
-    All other errors propagate immediately.
 
-    Args:
-        fn: Zero-argument callable that performs the Neptune request.
-        max_attempts: Maximum number of attempts before giving up.
-        base_delay: Initial backoff delay in seconds.
-        max_delay: Cap on any single backoff delay in seconds.
+def _sleep(attempt, base_delay, max_delay):
+    delay = random.uniform(0, min(max_delay, base_delay * (2 ** (attempt - 1))))
+    time.sleep(delay)
+    return delay
 
-    Returns:
-        Whatever fn() returns on success.
 
-    Raises:
-        ClientError: Re-raised if a non-retriable error occurs or attempts are
-                     exhausted.
+def _notify(on_retry, code, attempt, err):
+    """Call the optional on_retry hook; a failing hook never changes retry behavior."""
+    if on_retry is None:
+        return
+    try:
+        on_retry(code, attempt, err)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def with_backoff(fn, *, max_attempts=6, base_delay=1.0, max_delay=30.0,
+                 retry_timeouts=True, non_retriable=(), on_retry=None):
+    """Call fn() with exponential backoff and full jitter on retriable errors.
+
+    Only use retry_timeouts=True for idempotent calls (status, list, or a start
+    call that carries a client token). Non-retriable errors propagate at once.
+
+    non_retriable: error codes to raise immediately even if they are normally retried.
+    on_retry: optional callable(error_code, attempt, exception), called once per
+        retry just before the backoff sleep. error_code is the service error code, or
+        the exception class name for client timeouts (ReadTimeoutError,
+        ConnectTimeoutError). Default None: behavior is unchanged.
     """
     attempt = 0
     while True:
@@ -73,151 +78,156 @@ def with_backoff(fn, *, max_attempts=6, base_delay=1.0, max_delay=30.0):
         try:
             return fn()
         except (ReadTimeoutError, ConnectTimeoutError) as err:
-            # Client-side timeouts can happen transiently during a rebuild
-            # (for example a slow status poll). Treat them as retriable.
-            if attempt >= max_attempts:
+            if not retry_timeouts or attempt >= max_attempts:
                 raise
-            delay = random.uniform(0, min(max_delay, base_delay * (2 ** (attempt - 1))))
-            print(
-                f"[retry] {type(err).__name__} on attempt "
-                f"{attempt}/{max_attempts}; backing off {delay:.1f}s"
-            )
-            time.sleep(delay)
+            _notify(on_retry, type(err).__name__, attempt, err)
+            d = _sleep(attempt, base_delay, max_delay)
+            print(f"[retry] {type(err).__name__} {attempt}/{max_attempts}; {d:.1f}s")
         except ClientError as err:
             code = err.response.get("Error", {}).get("Code", "")
-            if code not in RETRIABLE_ERRORS or attempt >= max_attempts:
+            if code in non_retriable or code not in RETRIABLE_ERRORS or attempt >= max_attempts:
                 raise
-            # Exponential backoff with full jitter.
-            delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
-            delay = random.uniform(0, delay)
-            print(
-                f"[retry] {code} on attempt {attempt}/{max_attempts}; "
-                f"backing off {delay:.1f}s"
-            )
-            time.sleep(delay)
+            _notify(on_retry, code, attempt, err)
+            d = _sleep(attempt, base_delay, max_delay)
+            print(f"[retry] {code} {attempt}/{max_attempts}; {d:.1f}s")
 
 
-def start_index_rebuild(
-    endpoint,
-    region,
-    scope="ALL",
-    concurrency=None,
-    write_buffer_size=None,
-    port=8182,
-):
-    """Start an online index rebuild and return the rebuild id.
+def _token_param(client):
+    """Return the StartIndexRebuild client-token parameter name, if the model has one."""
+    members = client.meta.service_model.operation_model("StartIndexRebuild").input_shape.members
+    for name in members:
+        if name.lower() == "clienttoken":
+            return name
+    return None
 
-    Args:
-        endpoint: Neptune endpoint hostname.
-        region: AWS region.
-        scope: Scope of the rebuild — one of ALL, QUADS, DICTIONARIES.
-        concurrency: Optional number of indexes to rebuild in parallel
-            (integer, 1..number of vCPUs on the writer; defaults to 1).
-            Higher values can shorten the rebuild but increase CPU and I/O load.
-        write_buffer_size: Optional write-buffer size — one of LOW, MEDIUM, HIGH
-            (defaults to LOW). Use a larger value under heavy write traffic or
-            bulk loads.
-        port: Neptune port.
 
-    Returns:
-        str: The index-rebuild id (rebuildId), used to poll status or cancel.
+def list_index_rebuilds(client, on_retry=None):
+    """Return the rebuild ids known to the writer (only the most recent is retained).
+
+    ListIndexRebuilds returns just {"rebuildIds": [...]}: ids only, no status.
+    """
+    resp = with_backoff(lambda: client.list_index_rebuilds(), on_retry=on_retry)
+    return list(resp.get("rebuildIds") or [])
+
+
+def active_rebuild(client, on_retry=None):
+    """Return (rebuildId, status_response) for a rebuild that is not in a terminal
+    state, or None. Needs one GetIndexRebuildStatus call per listed id."""
+    for rid in list_index_rebuilds(client, on_retry):
+        st = with_backoff(lambda rid=rid: client.get_index_rebuild_status(rebuildId=rid),
+                          on_retry=on_retry)
+        if (st.get("status") or "").upper() not in TERMINAL_STATES:
+            return rid, st
+    return None
+
+
+def _active_rebuild_id(client, on_retry=None):
+    found = active_rebuild(client, on_retry)
+    return found[0] if found else None
+
+
+def start_index_rebuild(endpoint, region, scope="ALL", concurrency=None,
+                        write_buffer_size=None, port=8182, client_token=None,
+                        on_retry=None):
+    """Start an online index rebuild and return its rebuildId.
+
+    A client token makes retries of the start call safe. If the service reports
+    that a rebuild is already running (ConflictException, or
+    ConcurrentModificationException), the start call is NOT retried: the active
+    rebuild's id is looked up with ListIndexRebuilds (then GetIndexRebuildStatus
+    for each id) instead of being lost. If no active rebuild is found, the original
+    error is raised. Note the returned rebuild may have a different scope than the
+    one requested; check its status if that matters.
+
+    write_buffer_size tracks concurrent QUERY writes during the rebuild. It has no
+    effect on bulk loads: bulk load and fast reset requests are rejected while a
+    rebuild runs.
     """
     scope = scope.upper()
     if scope not in VALID_SCOPES:
         raise ValueError(f"scope must be one of {VALID_SCOPES}, got {scope!r}")
-
-    client = _neptune_client(endpoint, region, port)
-
+    client = neptune_client(endpoint, region, port)
     params = {"scope": scope}
     if concurrency is not None:
-        params["concurrency"] = concurrency
+        params["concurrency"] = int(concurrency)
     if write_buffer_size is not None:
         wbs = write_buffer_size.upper()
         if wbs not in VALID_WRITE_BUFFER_SIZES:
-            raise ValueError(
-                f"write_buffer_size must be one of {VALID_WRITE_BUFFER_SIZES}, "
-                f"got {write_buffer_size!r}")
+            raise ValueError(f"write_buffer_size must be one of {VALID_WRITE_BUFFER_SIZES}")
         params["writeBufferSize"] = wbs
-
-    resp = with_backoff(lambda: client.start_index_rebuild(**params))
-    return resp.get("rebuildId")
-
-
-def get_index_rebuild_status(endpoint, region, operation_id, port=8182):
-    """Return the current status of an index rebuild operation."""
-    client = _neptune_client(endpoint, region, port)
-    return with_backoff(
-        lambda: client.get_index_rebuild_status(rebuildId=operation_id)
-    )
-
-
-def cancel_index_rebuild(endpoint, region, operation_id, port=8182):
-    """Cancel an in-progress index rebuild operation."""
-    client = _neptune_client(endpoint, region, port)
-    return with_backoff(
-        lambda: client.cancel_index_rebuild(rebuildId=operation_id)
-    )
+    token_name = _token_param(client)
+    if token_name:
+        params[token_name] = client_token or str(uuid.uuid4())
+    try:
+        resp = with_backoff(lambda: client.start_index_rebuild(**params),
+                            retry_timeouts=bool(token_name),
+                            non_retriable=ALREADY_RUNNING_CODES, on_retry=on_retry)
+        return resp.get("rebuildId")
+    except ClientError as err:
+        if err.response.get("Error", {}).get("Code") in ALREADY_RUNNING_CODES:
+            active = _active_rebuild_id(client, on_retry)
+            if active:
+                print(f"[start] a rebuild is already running; using rebuildId={active}")
+                return active
+        raise
 
 
-def wait_for_completion(endpoint, region, operation_id, poll_seconds=30, port=8182):
-    """Poll an index rebuild until it reaches a terminal state.
+def get_index_rebuild_status(endpoint, region, rebuild_id, port=8182, on_retry=None):
+    client = neptune_client(endpoint, region, port)
+    return with_backoff(lambda: client.get_index_rebuild_status(rebuildId=rebuild_id),
+                        on_retry=on_retry)
 
-    Args:
-        poll_seconds: Seconds to wait between status polls.
 
-    Returns:
-        dict: The final status response.
+def cancel_index_rebuild(endpoint, region, rebuild_id, port=8182, on_retry=None):
+    """Request cancellation. CANCELLING can take a long time (up to hours)."""
+    client = neptune_client(endpoint, region, port)
+    return with_backoff(lambda: client.cancel_index_rebuild(rebuildId=rebuild_id),
+                        on_retry=on_retry)
+
+
+def wait_for_completion(endpoint, region, rebuild_id, poll_seconds=30, port=8182,
+                        on_retry=None):
+    """Poll until the rebuild reaches COMPLETED, FAILED, or CANCELLED.
+
+    Prints status, progressPercentage, and estimatedEndTime (approximate) on each
+    poll. Only the most recent rebuild is retained and its record is lost on
+    restart or failover; a ResourceNotFoundException is reported as LOST.
     """
-    terminal = {"COMPLETED", "FAILED", "CANCELLED"}
     while True:
-        status = get_index_rebuild_status(endpoint, region, operation_id, port)
-        state = (status.get("status") or status.get("state") or "").upper()
-        print(f"[status] operation {operation_id}: {state or 'UNKNOWN'}")
-        if state in terminal:
-            return status
+        try:
+            st = get_index_rebuild_status(endpoint, region, rebuild_id, port, on_retry)
+        except ClientError as err:
+            if err.response.get("Error", {}).get("Code") == "ResourceNotFoundException":
+                print(f"[status] {rebuild_id}: record not found (restart or failover?)")
+                return {"rebuildId": rebuild_id, "status": "LOST"}
+            raise
+        state = (st.get("status") or "").upper()
+        print(f"[status] {rebuild_id}: {state} progress={st.get('progressPercentage')}% "
+              f"eta={st.get('estimatedEndTime')}")
+        if state in TERMINAL_STATES:
+            if state == "FAILED":
+                print(f"[status] failureReason={st.get('failureReason')}")
+            return st
         time.sleep(poll_seconds)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run a Neptune online index rebuild.")
-    parser.add_argument("--endpoint", required=True, help="Neptune endpoint hostname")
-    parser.add_argument("--region", required=True, help="AWS region, e.g. us-east-1")
-    parser.add_argument("--port", type=int, default=8182, help="Neptune port")
-    parser.add_argument(
-        "--scope",
-        default="ALL",
-        choices=VALID_SCOPES,
-        help="Scope of the rebuild (default ALL)",
-    )
-    parser.add_argument(
-        "--concurrency", type=int, default=None,
-        help="Number of indexes to rebuild in parallel (1..vCPUs)",
-    )
-    parser.add_argument(
-        "--write-buffer-size", default=None, choices=VALID_WRITE_BUFFER_SIZES,
-        help="Write buffer size (LOW, MEDIUM, HIGH; default LOW)",
-    )
-    parser.add_argument(
-        "--wait", action="store_true", help="Poll until the rebuild completes"
-    )
-    parser.add_argument("--poll-seconds", type=int, default=30, help="Status poll interval")
-    args = parser.parse_args()
-
-    op_id = start_index_rebuild(
-        args.endpoint,
-        args.region,
-        scope=args.scope,
-        concurrency=args.concurrency,
-        write_buffer_size=args.write_buffer_size,
-        port=args.port,
-    )
-    print(f"Started index rebuild (scope={args.scope}); rebuildId={op_id}")
-
-    if args.wait:
-        final = wait_for_completion(
-            args.endpoint, args.region, op_id, args.poll_seconds, args.port
-        )
-        print(f"Final state: {final.get('status') or final.get('state')}")
+    ap = argparse.ArgumentParser(description="Run a Neptune online index rebuild.")
+    ap.add_argument("--endpoint", required=True, help="Neptune WRITER endpoint hostname")
+    ap.add_argument("--region", required=True)
+    ap.add_argument("--port", type=int, default=8182)
+    ap.add_argument("--scope", default="ALL", choices=VALID_SCOPES)
+    ap.add_argument("--concurrency", type=int)
+    ap.add_argument("--write-buffer-size", choices=VALID_WRITE_BUFFER_SIZES)
+    ap.add_argument("--wait", action="store_true")
+    ap.add_argument("--poll-seconds", type=int, default=30)
+    a = ap.parse_args()
+    rid = start_index_rebuild(a.endpoint, a.region, a.scope, a.concurrency,
+                              a.write_buffer_size, a.port)
+    print(f"Started index rebuild (scope={a.scope}); rebuildId={rid}")
+    if a.wait:
+        final = wait_for_completion(a.endpoint, a.region, rid, a.poll_seconds, a.port)
+        print(f"Final status: {final.get('status')}")
 
 
 if __name__ == "__main__":
